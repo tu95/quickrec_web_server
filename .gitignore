@@ -1,0 +1,7 @@
+/node_modules
+/.next
+/uploads/*.opus
+/uploads/*.mp3
+/uploads/*.wav
+.DS_Store
+*.log
