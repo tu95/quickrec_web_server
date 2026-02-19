@@ -2,16 +2,50 @@
 
 简单的 Next.js 服务器，用于接收 Zepp App 上传的录音文件。
 
-## 快速开始
+## 用法
+### 1. 首次安装
 
 ```bash
-cd server
+cd web_server
 npm install
+```
+
+### 2. 开发模式（前台）
+
+```bash
 npm run dev
 ```
 
 服务器默认监听 `3000` 端口（例如 `http://你的IP:3000`）。  
 如果你做了反向代理/公网映射，请在 Zepp 端填写你的实际公网地址与端口。
+
+### 3. 生产模式（后台 + 崩溃诊断）
+
+```bash
+npm run build
+npm run start:bg
+```
+
+说明：
+- 不做保活自动重启，服务崩溃后会退出。
+- 会记录退出码/信号，便于定位崩溃原因。
+- 如有 Node 致命错误，会额外生成诊断报告 `logs/node-report.*.json`。
+
+### 4. 查看日志与崩溃原因
+
+```bash
+# Next 服务日志（stdout/stderr）
+npm run logs:start
+
+# 诊断日志（退出码/退出信号，如 SIGKILL）
+npm run logs:supervisor
+```
+
+### 5. 停止后台服务
+
+```bash
+npm run stop:bg
+```
 
 ## API
 
@@ -55,7 +89,7 @@ npm run dev
 ```
 
 注意：该接口依赖 Node 库 `opusscript` 与 `wav`。  
-首次部署请在 `server` 目录执行：
+首次部署请在 `web_server` 目录执行：
 
 ```bash
 npm i opusscript wav
