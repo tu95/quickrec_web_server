@@ -34,11 +34,18 @@ npm run start:bg
 ### 4. 查看日志与崩溃原因
 
 ```bash
-# Next 服务日志（stdout/stderr）
+# Next 服务日志（stdout/stderr，先回看最近 200 行再持续跟踪）
 npm run logs:start
 
-# 诊断日志（退出码/退出信号，如 SIGKILL）
+# 诊断日志（退出码/退出信号，如 SIGKILL，先回看最近 200 行再持续跟踪）
 npm run logs:supervisor
+```
+
+如果只想一次性看最近错误，不跟踪：
+
+```bash
+tail -n 300 logs/start.log
+tail -n 100 logs/supervisor.log
 ```
 
 ### 5. 停止后台服务
