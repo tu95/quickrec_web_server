@@ -79,7 +79,8 @@ export async function convertOpusFileToWav(options) {
   const inputPath = join(uploadDir, opusFileName)
   await fs.access(inputPath)
 
-  const sampleRate = 16000
+  // Zepp 录音是语音场景，默认降采样到 8k 以减少 WAV 体积。
+  const sampleRate = 8000
   const channels = 1
   const outputName = `${opusFileName.slice(0, -5)}.wav`
   const outputPath = join(uploadDir, outputName)

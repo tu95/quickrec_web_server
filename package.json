@@ -9,7 +9,7 @@
     "start": "next start --hostname 0.0.0.0 --port 3000",
     "start:trace": "node scripts/start-trace.js",
     "start:bg": "sh -c 'mkdir -p logs; nohup npm run start:trace > logs/start.log 2>&1 & pid=$!; echo $pid > logs/start.pid; echo \"start started, pid=$pid\"'",
-    "stop:bg": "sh -c 'for f in logs/dev.pid logs/start.pid; do if [ -f \"$f\" ]; then pid=$(cat \"$f\"); kill \"$pid\" 2>/dev/null || true; rm -f \"$f\"; echo \"stopped pid=$pid\"; fi; done'",
+    "stop:bg": "node scripts/stop-bg.js",
     "logs:dev": "sh -c 'tail -f logs/dev.log'",
     "logs:start": "sh -c 'tail -n 200 -f logs/start.log'",
     "logs:supervisor": "sh -c 'tail -n 200 -f logs/supervisor.log'"

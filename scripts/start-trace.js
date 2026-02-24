@@ -7,6 +7,8 @@ const { spawn } = require('child_process');
 const rootDir = path.resolve(__dirname, '..');
 const logsDir = path.join(rootDir, 'logs');
 const supervisorLogPath = path.join(logsDir, 'supervisor.log');
+const supervisorPidPath = path.join(logsDir, 'start-trace.pid');
+const nextPidPath = path.join(logsDir, 'next-start.pid');
 const nextBinPath = path.join(rootDir, 'node_modules', 'next', 'dist', 'bin', 'next');
 const host = process.env.HOST || '0.0.0.0';
 const port = String(process.env.PORT || '3000');
@@ -23,6 +25,19 @@ function appendSupervisorLog(level, message) {
   try {
     fs.mkdirSync(logsDir, { recursive: true });
     fs.appendFileSync(supervisorLogPath, line);
+  } catch (e) {}
+}
+
+function writePidFile(filePath, pid) {
+  try {
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.writeFileSync(filePath, `${pid}\n`);
+  } catch (e) {}
+}
+
+function removePidFile(filePath) {
+  try {
+    fs.unlinkSync(filePath);
   } catch (e) {}
 }
 
@@ -53,6 +68,7 @@ function startNext() {
     process.exit(1);
     return;
   }
+  writePidFile(supervisorPidPath, process.pid);
 
   const nodeArgs = [
     '--trace-uncaught',
@@ -78,13 +94,18 @@ function startNext() {
     stdio: 'inherit'
   });
   logInfo(`child pid=${child.pid}`);
+  writePidFile(nextPidPath, child.pid);
 
   child.on('error', (err) => {
     logError(`spawn error: ${err && err.stack ? err.stack : String(err)}`);
+    removePidFile(nextPidPath);
+    removePidFile(supervisorPidPath);
     process.exit(1);
   });
 
   child.on('exit', (code, signal) => {
+    removePidFile(nextPidPath);
+    removePidFile(supervisorPidPath);
     exitWithChildResult(code, signal);
   });
 }
@@ -123,6 +144,11 @@ process.on('unhandledRejection', (reason) => {
   const detail = reason && reason.stack ? reason.stack : String(reason);
   logError(`unhandledRejection: ${detail}`);
   process.exit(1);
+});
+
+process.on('exit', () => {
+  removePidFile(nextPidPath);
+  removePidFile(supervisorPidPath);
 });
 
 startNext();

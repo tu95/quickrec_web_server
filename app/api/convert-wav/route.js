@@ -92,6 +92,11 @@ export async function POST(request) {
       { headers: CORS_HEADERS }
     )
   } catch (err) {
+    console.error('[convert-wav] convert failed', {
+      fileName,
+      error: String(err && err.message ? err.message : err),
+      stack: err && err.stack ? String(err.stack) : ''
+    })
     return Response.json(
       { success: false, error: String(err && err.message ? err.message : err) },
       { status: 500, headers: CORS_HEADERS }

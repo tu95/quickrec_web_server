@@ -99,6 +99,11 @@ export async function POST(request) {
         wavUrl = `${origin}/api/files/${encodeURIComponent(converted.filename)}`
       } catch (error) {
         autoConvertError = String(error && error.message ? error.message : error)
+        console.error('[upload] auto convert wav failed', {
+          filename,
+          error: autoConvertError,
+          stack: error && error.stack ? String(error.stack) : ''
+        })
       }
     }
     const primaryUrl = wavUrl || sourceUrl

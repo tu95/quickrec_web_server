@@ -81,6 +81,39 @@ export default function FileManagerClient({ origin, initialFiles }) {
     }
   }
 
+  async function convertToWav(fileName) {
+    if (!fileName) return
+    setBusy(fileName, true)
+    setMessage('')
+    try {
+      const res = await fetch('/api/convert-wav', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: fileName,
+          overwrite: true
+        })
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data || data.success !== true) {
+        const errorText = data && data.error ? String(data.error) : `HTTP ${res.status}`
+        throw new Error(errorText)
+      }
+      const outputName = data && data.filename ? data.filename : ''
+      setMessage(outputName ? `转换完成: ${outputName}` : '转换完成')
+      await refreshFiles()
+    } catch (error) {
+      const errorText = String(error && error.message ? error.message : error)
+      if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+        window.alert(errorText)
+      }
+    } finally {
+      setBusy(fileName, false)
+    }
+  }
+
   function play(url, label) {
     if (!url) return
     setPlayer({ url, label, token: Date.now() })
@@ -106,6 +139,14 @@ export default function FileManagerClient({ origin, initialFiles }) {
         {isOpus ? (
           <>
             <a href={fileUrl} download style={linkStyle} className="file-action-link">下载OPUS</a>
+            <button
+              style={actionBtnStyle}
+              className="file-action-btn"
+              onClick={() => convertToWav(file.name)}
+              disabled={busy}
+            >
+              {busy ? '转换中...' : '转换到WAV'}
+            </button>
             <span style={disabledHintStyle} className="file-disabled-hint">归档兜底文件（仅恢复使用）</span>
           </>
         ) : isWav ? (
