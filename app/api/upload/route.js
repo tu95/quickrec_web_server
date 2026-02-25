@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs'
 import { extname, join } from 'path'
 import { networkInterfaces } from 'os'
-import { convertOpusFileToWav } from '../_lib/opus-wav'
+import { enqueueMp3Convert } from '../_lib/mp3-queue'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const CORS_HEADERS = {
@@ -84,39 +84,46 @@ export async function POST(request) {
     await fs.writeFile(filepath, buffer)
 
     const origin = getRequestOrigin(request)
-    const sourceUrl = `${origin}/api/files/${encodeURIComponent(filename)}`
-    let wavFilename = ''
-    let wavUrl = ''
+    let sourceUrl = `${origin}/api/files/${encodeURIComponent(filename)}`
+    let mp3Filename = ''
+    let mp3Url = ''
     let autoConvertError = ''
+    let outputFilename = filename
+    let outputSize = buffer.length
     if (extname(filename).toLowerCase() === '.opus') {
       try {
-        const converted = await convertOpusFileToWav({
+        const converted = await enqueueMp3Convert({
           uploadDir: UPLOAD_DIR,
           opusFileName: filename,
           overwrite: true,
+          removeSource: true,
+          source: 'upload',
         })
-        wavFilename = converted.filename
-        wavUrl = `${origin}/api/files/${encodeURIComponent(converted.filename)}`
+        mp3Filename = converted.filename
+        mp3Url = `${origin}/api/files/${encodeURIComponent(converted.filename)}`
+        outputFilename = converted.filename
+        outputSize = converted.size
+        sourceUrl = ''
       } catch (error) {
         autoConvertError = String(error && error.message ? error.message : error)
-        console.error('[upload] auto convert wav failed', {
+        console.error('[upload] auto convert mp3 failed', {
           filename,
           error: autoConvertError,
           stack: error && error.stack ? String(error.stack) : ''
         })
       }
     }
-    const primaryUrl = wavUrl || sourceUrl
+    const primaryUrl = mp3Url || sourceUrl
 
     return Response.json(
       {
         success: true,
-        filename: filename,
-        size: buffer.length,
+        filename: outputFilename,
+        size: outputSize,
         sourceUrl,
-        wavFilename,
-        wavUrl,
-        autoConverted: !!wavUrl,
+        mp3Filename,
+        mp3Url,
+        autoConverted: !!mp3Url,
         autoConvertError,
         url: primaryUrl,
       },
@@ -153,12 +160,12 @@ export async function GET(request) {
       timestamp: Date.now(),
       localIP: localIP,
       origin: getRequestOrigin(request),
-      uploadAutoConvertWav: true,
+      uploadAutoConvertMp3: true,
       endpoints: {
         upload: 'POST /api/upload',
         uploadTest: 'POST /api/upload-test',
         uploadChunk: 'POST /api/upload-chunk',
-        convertWav: 'POST /api/convert-wav',
+        convertMp3: 'POST /api/convert-mp3',
         files: 'GET /api/files',
         fileDelete: 'DELETE /api/files/{name}',
       },

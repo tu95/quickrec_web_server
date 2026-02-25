@@ -58,15 +58,16 @@ npm run stop:bg
 ### POST /api/upload
 
 上传文件。使用 `multipart/form-data` 格式，字段名为 `file`。
-当上传的是 `.opus` 时，服务端会自动转换为同名 `.wav`，响应中的 `url` 默认优先返回 `.wav` 地址。
+当上传的是 `.opus` 时，服务端会自动转换为同名 `.mp3`，并仅保留 `.mp3` 文件；响应中的 `url` 默认返回 `.mp3` 地址。
+转码采用单线程队列执行，多任务会自动排队，避免并发打满机器。
 
 **响应示例：**
 ```json
 {
   "success": true,
-  "filename": "recording_1234567890.opus",
-  "size": 102456,
-  "url": "http://your-domain-or-ip[:port]/api/files/recording_1234567890.opus"
+  "filename": "recording_1234567890.mp3",
+  "size": 38456,
+  "url": "http://your-domain-or-ip[:port]/api/files/recording_1234567890.mp3"
 }
 ```
 
@@ -82,11 +83,12 @@ npm run stop:bg
 ### POST /api/upload-chunk
 
 分片上传接口（JSON）。服务端会按顺序拼接 chunk 并生成最终音频文件。
-当最终文件为 `.opus` 时，服务端会自动转换为同名 `.wav`，响应中的 `url` 默认优先返回 `.wav` 地址。
+当最终文件为 `.opus` 时，服务端会自动转换为同名 `.mp3`，并仅保留 `.mp3` 文件；响应中的 `url` 默认返回 `.mp3` 地址。
+转码采用单线程队列执行，多任务会自动排队，避免并发打满机器。
 
-### POST /api/convert-wav
+### POST /api/convert-mp3
 
-将手表录制的 `.opus` 文件转为 `.wav`。请求体示例：
+将手表录制的 `.opus` 文件转为 `.mp3`（转换成功后会删除源 `.opus`）。请求体示例：
 
 ```json
 {
@@ -94,11 +96,11 @@ npm run stop:bg
 }
 ```
 
-注意：该接口依赖 Node 库 `opusscript` 与 `wav`。  
+注意：该接口依赖 Node 库 `opusscript`，并要求系统安装 `ffmpeg`。  
 首次部署请在 `web_server` 目录执行：
 
 ```bash
-npm i opusscript wav
+npm i opusscript
 ```
 
 ### GET /api/files
@@ -111,7 +113,7 @@ npm i opusscript wav
 
 ### DELETE /api/files/{name}
 
-删除指定文件。删除 `.opus` 时会同时尝试删除同名 `.wav`（并兼容删除历史同名 `.mp3`）。
+删除指定文件。删除 `.opus` 或 `.mp3` 时会同时尝试删除同名对应文件。
 
 ## 配置
 

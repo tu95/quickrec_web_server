@@ -8,10 +8,14 @@ const rootDir = path.resolve(__dirname, '..');
 const logsDir = path.join(rootDir, 'logs');
 const pidFiles = ['dev.pid', 'start.pid', 'start-trace.pid', 'next-start.pid'];
 const fallbackPatterns = [
-  `${rootDir}/node_modules/.bin/next dev --hostname 0.0.0.0 --port 3000`,
-  `${rootDir}/node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port 3000`,
+  'next dev --hostname 0.0.0.0 --port 3000',
+  'next start --hostname 0.0.0.0 --port 3000',
+  `${rootDir}/node_modules/.bin/next dev`,
+  `${rootDir}/node_modules/next/dist/bin/next start`,
   `${rootDir}/scripts/start-trace.js`,
   'node scripts/start-trace.js',
+  'npm run dev',
+  'npm run start:trace'
 ];
 
 function readPid(filePath) {
@@ -42,6 +46,32 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function readChildPids(pid) {
+  try {
+    const output = execFileSync('pgrep', ['-P', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    });
+    return String(output || '')
+      .split('\n')
+      .map(item => Number(item.trim()))
+      .filter(item => Number.isInteger(item) && item > 1);
+  } catch (e) {
+    return [];
+  }
+}
+
+function collectPidTree(rootPid, acc = new Set()) {
+  if (!Number.isInteger(rootPid) || rootPid <= 1) return acc;
+  if (acc.has(rootPid)) return acc;
+  acc.add(rootPid);
+  const children = readChildPids(rootPid);
+  for (const childPid of children) {
+    collectPidTree(childPid, acc);
+  }
+  return acc;
+}
+
 async function killPid(pid) {
   if (!Number.isInteger(pid) || pid <= 1) return false;
   if (!isAlive(pid)) return false;
@@ -67,6 +97,21 @@ async function killPid(pid) {
   return !isAlive(pid);
 }
 
+async function killPidTree(rootPid) {
+  const pidTree = [...collectPidTree(rootPid)];
+  // 先停子进程，再停父进程，避免 orphan
+  pidTree.sort((a, b) => b - a);
+  let hasStopped = false;
+  for (const pid of pidTree) {
+    const stopped = await killPid(pid);
+    hasStopped = hasStopped || stopped;
+  }
+  return {
+    hasStopped,
+    killed: pidTree
+  };
+}
+
 function fallbackKill(pattern) {
   try {
     execFileSync('pkill', ['-f', pattern], { stdio: 'ignore' });
@@ -84,9 +129,9 @@ async function main() {
   }
 
   for (const pid of uniquePids) {
-    const stopped = await killPid(pid);
-    if (stopped) {
-      console.log(`stopped pid=${pid}`);
+    const result = await killPidTree(pid);
+    if (result.hasStopped) {
+      console.log(`stopped pid tree from ${pid}: ${result.killed.join(',')}`);
     } else {
       console.log(`pid not running=${pid}`);
     }

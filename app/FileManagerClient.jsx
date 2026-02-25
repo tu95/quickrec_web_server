@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 
 function formatDate(timestamp) {
   return new Date(timestamp).toLocaleString('zh-CN')
@@ -8,14 +9,35 @@ function formatDate(timestamp) {
 
 function isPlayableExt(ext) {
   const e = String(ext || '').toLowerCase()
-  return e === '.mp3' || e === '.wav' || e === '.ogg' || e === '.webm'
+  return e === '.mp3' || e === '.ogg' || e === '.webm'
+}
+
+function isMeetingJobRunning(job) {
+  if (!job || typeof job !== 'object') return false
+  const status = String(job.status || '').toLowerCase()
+  return status === 'queued' || status === 'running'
+}
+
+function normalizeNoteViewUrl(rawUrl) {
+  const value = String(rawUrl || '').trim()
+  if (!value) return ''
+  const apiPrefix = '/api/meeting-notes/'
+  if (value.startsWith(apiPrefix)) {
+    const noteId = value.slice(apiPrefix.length).split('?')[0]
+    if (noteId) return `/notes/${encodeURIComponent(noteId)}`
+  }
+  return value
 }
 
 export default function FileManagerClient({ origin, initialFiles }) {
+  const router = useRouter()
   const [files, setFiles] = useState(Array.isArray(initialFiles) ? initialFiles : [])
   const [activeTab, setActiveTab] = useState('recording')
   const [loading, setLoading] = useState(false)
   const [busyMap, setBusyMap] = useState({})
+  const [noteBusyMap, setNoteBusyMap] = useState({})
+  const [noteJobMap, setNoteJobMap] = useState({})
+  const [noteErrorLog, setNoteErrorLog] = useState('')
   const [message, setMessage] = useState('')
   const [player, setPlayer] = useState({ url: '', label: '', token: 0 })
   const audioRef = useRef(null)
@@ -55,6 +77,14 @@ export default function FileManagerClient({ origin, initialFiles }) {
     setBusyMap(prev => ({ ...prev, [name]: value }))
   }
 
+  function setNoteBusy(name, value) {
+    setNoteBusyMap(prev => ({ ...prev, [name]: value }))
+  }
+
+  function setNoteJob(name, value) {
+    setNoteJobMap(prev => ({ ...prev, [name]: value }))
+  }
+
   async function deleteFile(fileName) {
     if (!fileName) return
     if (typeof window !== 'undefined') {
@@ -81,12 +111,81 @@ export default function FileManagerClient({ origin, initialFiles }) {
     }
   }
 
-  async function convertToWav(fileName) {
+  async function generateMeetingNote(fileName) {
+    if (!fileName) return
+    setNoteBusy(fileName, true)
+    setNoteErrorLog('')
+    setMessage('')
+    try {
+      const createRes = await fetch('/api/meeting-notes/jobs', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ fileName })
+      })
+      const createData = await createRes.json().catch(() => null)
+      if (!createRes.ok || !createData || !createData.success || !createData.job) {
+        throw new Error((createData && createData.error) ? createData.error : `HTTP ${createRes.status}`)
+      }
+      const jobId = createData.job.id
+      setNoteJob(fileName, createData.job)
+
+      for (let i = 0; i < 120; i += 1) {
+        if (!jobId) break
+        await new Promise(resolve => setTimeout(resolve, 2500))
+        const statusRes = await fetch(`/api/meeting-notes/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' })
+        const statusData = await statusRes.json().catch(() => null)
+        if (!statusRes.ok || !statusData || !statusData.success || !statusData.job) {
+          throw new Error((statusData && statusData.error) ? statusData.error : `HTTP ${statusRes.status}`)
+        }
+        const job = statusData.job
+        setNoteJob(fileName, job)
+        if (job.status === 'completed') {
+          setMessage('会议纪要已生成')
+          openMeetingNote(job)
+          return
+        }
+        if (job.status === 'failed') {
+          throw new Error(job.error || '纪要生成失败')
+        }
+      }
+      throw new Error('纪要生成超时，请稍后重试')
+    } catch (error) {
+      const text = String(error && error.message ? error.message : error)
+      setMessage(`纪要生成失败: ${text}`)
+      setNoteErrorLog(text)
+    } finally {
+      setNoteBusy(fileName, false)
+    }
+  }
+
+  function openMeetingNote(job) {
+    const noteUrl = job && job.result && job.result.noteUrl ? String(job.result.noteUrl) : ''
+    openMeetingNoteByUrl(noteUrl)
+  }
+
+  function openMeetingNoteByUrl(noteUrl) {
+    const normalizedUrl = normalizeNoteViewUrl(noteUrl)
+    if (!normalizedUrl) {
+      setMessage('纪要已完成，但未找到查看链接')
+      return
+    }
+    if (/^https?:\/\//i.test(normalizedUrl)) {
+      if (typeof window !== 'undefined' && typeof window.location !== 'undefined') {
+        window.location.assign(normalizedUrl)
+      }
+      return
+    }
+    router.push(normalizedUrl)
+  }
+
+  async function convertToMp3(fileName) {
     if (!fileName) return
     setBusy(fileName, true)
     setMessage('')
     try {
-      const res = await fetch('/api/convert-wav', {
+      const res = await fetch('/api/convert-mp3', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -129,35 +228,54 @@ export default function FileManagerClient({ origin, initialFiles }) {
     }
   }, [player.url, player.token])
 
-  function renderActions(file, busy) {
+  function renderActions(file, busy, noteBusy, noteJob) {
     const fileUrl = `/api/files/${encodeURIComponent(file.name)}`
     const isOpus = file.ext === '.opus'
-    const isWav = file.ext === '.wav'
+    const canGenerateNote = isPlayableExt(file.ext) || isOpus
+    const inMemoryNoteUrl = noteJob && noteJob.result && noteJob.result.noteUrl ? String(noteJob.result.noteUrl) : ''
+    const persistedNoteUrl = file && file.latestNoteUrl ? String(file.latestNoteUrl) : ''
+    const noteViewUrl = normalizeNoteViewUrl(inMemoryNoteUrl || persistedNoteUrl)
 
     return (
-      <>
+      <div style={actionBlockStyle}>
+        <div style={actionPrimaryRowStyle}>
         {isOpus ? (
           <>
             <a href={fileUrl} download style={linkStyle} className="file-action-link">下载OPUS</a>
             <button
               style={actionBtnStyle}
               className="file-action-btn"
-              onClick={() => convertToWav(file.name)}
+              onClick={() => convertToMp3(file.name)}
               disabled={busy}
             >
-              {busy ? '转换中...' : '转换到WAV'}
+              {busy ? '转换中...' : '转换到MP3'}
             </button>
             <span style={disabledHintStyle} className="file-disabled-hint">归档兜底文件（仅恢复使用）</span>
           </>
-        ) : isWav ? (
-          <a href={fileUrl} download style={linkStyle} className="file-action-link">
-            下载WAV
-          </a>
         ) : (
           <a href={fileUrl} download style={linkStyle} className="file-action-link">下载</a>
         )}
         {isPlayableExt(file.ext) && (
           <button style={actionBtnStyle} className="file-action-btn" onClick={() => play(fileUrl, file.name)}>播放</button>
+        )}
+        {canGenerateNote && (
+          <button
+            style={noteBtnStyle}
+            className="file-action-btn"
+            onClick={() => generateMeetingNote(file.name)}
+            disabled={noteBusy}
+          >
+            {noteBusy ? '纪要生成中...' : '一键生成会议纪要'}
+          </button>
+        )}
+        {canGenerateNote && noteViewUrl && (
+          <button
+            style={noteBtnStyle}
+            className="file-action-btn"
+            onClick={() => openMeetingNoteByUrl(noteViewUrl)}
+          >
+            查看会议纪要
+          </button>
         )}
         <button
           style={deleteBtnStyle}
@@ -167,7 +285,19 @@ export default function FileManagerClient({ origin, initialFiles }) {
         >
           删除
         </button>
-      </>
+        </div>
+        {noteJob && (
+          <div style={statusRowStyle}>
+            <span style={statusBadgeStyle}>
+              {noteJob.status === 'completed'
+                ? '纪要已完成'
+                : noteJob.status === 'failed'
+                  ? `失败: ${noteJob.error || '未知错误'}`
+                  : `处理中: ${noteJob.stage || noteJob.status}`}
+            </span>
+          </div>
+        )}
+      </div>
     )
   }
 
@@ -226,6 +356,12 @@ export default function FileManagerClient({ origin, initialFiles }) {
       {message && (
         <div style={messageStyle}>{message}</div>
       )}
+      {noteErrorLog && (
+        <div style={errorLogCardStyle}>
+          <div style={errorLogTitleStyle}>纪要生成错误日志</div>
+          <pre style={errorLogPreStyle}>{noteErrorLog}</pre>
+        </div>
+      )}
 
       {list.length === 0 ? (
         <div style={emptyStyle}>
@@ -245,6 +381,12 @@ export default function FileManagerClient({ origin, initialFiles }) {
             <tbody>
               {list.map((file) => {
                 const busy = !!busyMap[file.name]
+                const inMemoryNoteJob = noteJobMap[file.name] || null
+                const persistedNoteJob = file && file.latestMeetingJob && typeof file.latestMeetingJob === 'object'
+                  ? file.latestMeetingJob
+                  : null
+                const noteJob = inMemoryNoteJob || persistedNoteJob
+                const noteBusy = !!noteBusyMap[file.name] || isMeetingJobRunning(noteJob)
                 return (
                   <tr key={file.name} style={{ borderBottom: '1px solid #eee' }}>
                     <td style={fileNameCellStyle}>{file.name}</td>
@@ -252,7 +394,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
                     <td style={cellStyle}>{formatDate(file.createdAt)}</td>
                     <td style={cellStyle}>
                       <div style={desktopActionsWrapStyle} className="file-actions">
-                        {renderActions(file, busy)}
+                        {renderActions(file, busy, noteBusy, noteJob)}
                       </div>
                     </td>
                   </tr>
@@ -268,6 +410,25 @@ export default function FileManagerClient({ origin, initialFiles }) {
       </div>
     </>
   )
+}
+
+const actionBlockStyle = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'flex-start',
+  gap: 6,
+  width: '100%'
+}
+
+const actionPrimaryRowStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  gap: 8
+}
+
+const statusRowStyle = {
+  width: '100%'
 }
 
 const tableStyle = {
@@ -353,6 +514,31 @@ const deleteBtnStyle = {
   fontWeight: 700
 }
 
+const noteBtnStyle = {
+  fontSize: 13,
+  border: '1px solid rgba(88, 84, 201, 0.34)',
+  background: 'linear-gradient(135deg, rgba(126, 214, 255, 0.25), rgba(255, 188, 138, 0.26))',
+  color: '#2f436f',
+  borderRadius: 999,
+  padding: '10px 14px',
+  minHeight: 44,
+  cursor: 'pointer',
+  fontWeight: 700
+}
+
+const statusBadgeStyle = {
+  fontSize: 12,
+  color: '#3a5660',
+  border: '1px solid rgba(45, 94, 103, 0.2)',
+  background: 'rgba(255,255,255,0.8)',
+  borderRadius: 999,
+  padding: '7px 10px',
+  maxWidth: '100%',
+  whiteSpace: 'normal',
+  wordBreak: 'break-word',
+  lineHeight: 1.45
+}
+
 const tabStyle = {
   border: '1px solid rgba(39, 74, 80, 0.18)',
   background: 'rgba(255,255,255,0.72)',
@@ -399,6 +585,33 @@ const messageStyle = {
   marginBottom: 12,
   color: '#866020',
   fontSize: 13
+}
+
+const errorLogCardStyle = {
+  width: '100%',
+  background: 'linear-gradient(180deg, #fff5f5 0%, #ffecec 100%)',
+  border: '1px solid #efb4b4',
+  borderRadius: 12,
+  padding: 12,
+  marginBottom: 12,
+  color: '#7e2b2b',
+  boxSizing: 'border-box'
+}
+
+const errorLogTitleStyle = {
+  fontSize: 13,
+  fontWeight: 700,
+  marginBottom: 8
+}
+
+const errorLogPreStyle = {
+  margin: 0,
+  fontSize: 12,
+  lineHeight: 1.6,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  maxHeight: 260,
+  overflowY: 'auto'
 }
 
 const refreshBtnStyle = {

@@ -1,7 +1,10 @@
 import { promises as fs } from 'fs'
 import { extname, join } from 'path'
+import { requireSiteAuth } from '../_lib/admin-auth'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads')
+const NOTES_DIR = join(UPLOAD_DIR, 'meeting_notes')
+const JOBS_DIR = join(NOTES_DIR, 'jobs')
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET,OPTIONS',
@@ -28,33 +31,133 @@ function getFileCategory(name) {
   return 'recording'
 }
 
-function getBaseName(name) {
-  const ext = extname(name)
-  if (!ext) return name
-  return name.slice(0, -ext.length)
+function toNumber(value) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : 0
 }
 
-export async function GET() {
+function toClientMeetingJob(rawJob) {
+  if (!rawJob || typeof rawJob !== 'object') return null
+  const id = String(rawJob.id || '').trim()
+  const fileName = String(rawJob.fileName || '').trim()
+  if (!id || !fileName) return null
+  return {
+    id,
+    fileName,
+    status: String(rawJob.status || '').trim(),
+    stage: String(rawJob.stage || '').trim(),
+    createdAt: toNumber(rawJob.createdAt),
+    updatedAt: toNumber(rawJob.updatedAt),
+    error: String(rawJob.error || '').trim(),
+    result: rawJob.result && typeof rawJob.result === 'object'
+      ? rawJob.result
+      : null
+  }
+}
+
+async function loadLatestNoteMap() {
+  const byFileName = new Map()
+  try {
+    const entries = await fs.readdir(NOTES_DIR, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isFile()) continue
+      if (!entry.name.endsWith('.json')) continue
+
+      const metadataPath = join(NOTES_DIR, entry.name)
+      let metadata
+      try {
+        const text = await fs.readFile(metadataPath, 'utf8')
+        metadata = JSON.parse(text)
+      } catch {
+        continue
+      }
+
+      const sourceFileName = String(metadata?.fileName || '').trim()
+      if (!sourceFileName) continue
+      const noteId = String(metadata?.id || entry.name.slice(0, -5)).trim()
+      if (!noteId) continue
+      const createdAt = toNumber(metadata?.createdAt)
+      const previous = byFileName.get(sourceFileName)
+      if (!previous || createdAt >= previous.createdAt) {
+        byFileName.set(sourceFileName, {
+          noteId,
+          noteUrl: `/notes/${encodeURIComponent(noteId)}`,
+          createdAt
+        })
+      }
+    }
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return byFileName
+    }
+    throw error
+  }
+  return byFileName
+}
+
+async function loadLatestMeetingJobMap() {
+  const byFileName = new Map()
+  try {
+    const entries = await fs.readdir(JOBS_DIR, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isFile()) continue
+      if (!entry.name.endsWith('.json')) continue
+
+      const jobPath = join(JOBS_DIR, entry.name)
+      let rawJob
+      try {
+        const text = await fs.readFile(jobPath, 'utf8')
+        rawJob = JSON.parse(text)
+      } catch {
+        continue
+      }
+
+      const job = toClientMeetingJob(rawJob)
+      if (!job) continue
+      const fileName = job.fileName
+      const jobOrderTs = job.updatedAt || job.createdAt
+      const previous = byFileName.get(fileName)
+      if (!previous) {
+        byFileName.set(fileName, job)
+        continue
+      }
+      const prevOrderTs = toNumber(previous.updatedAt) || toNumber(previous.createdAt)
+      if (jobOrderTs >= prevOrderTs) {
+        byFileName.set(fileName, job)
+      }
+    }
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return byFileName
+    }
+    throw error
+  }
+  return byFileName
+}
+
+export async function GET(request) {
+  const auth = await requireSiteAuth(request)
+  if (!auth.ok) {
+    return Response.json(
+      { success: false, error: auth.error },
+      { status: auth.status, headers: CORS_HEADERS }
+    )
+  }
   try {
     await ensureUploadDir()
     const files = await fs.readdir(UPLOAD_DIR)
     const visibleFiles = files.filter(name => !name.startsWith('.'))
-    const lowerNameMap = new Map()
-    for (const fileName of visibleFiles) {
-      lowerNameMap.set(String(fileName).toLowerCase(), fileName)
-    }
+    const latestNoteMap = await loadLatestNoteMap()
+    const latestMeetingJobMap = await loadLatestMeetingJobMap()
 
     const fileList = await Promise.all(
       visibleFiles
         .map(async (name) => {
           const stat = await fs.stat(join(UPLOAD_DIR, name))
+          if (!stat.isFile()) return null
           const ext = extname(name).toLowerCase()
-          const baseName = getBaseName(name)
-
-          const pairedWavName = lowerNameMap.get(`${baseName}.wav`.toLowerCase())
-          const pairedOpusName = lowerNameMap.get(`${baseName}.opus`.toLowerCase())
-          const hasWav = ext === '.opus' && !!pairedWavName
-          const hasSourceOpus = ext === '.wav' && !!pairedOpusName
+          const latestNote = latestNoteMap.get(name) || null
+          const latestMeetingJob = latestMeetingJobMap.get(name) || null
           return {
             name,
             ext,
@@ -63,12 +166,12 @@ export async function GET() {
             createdAt: stat.birthtime.getTime(),
             category: getFileCategory(name),
             isTest: getFileCategory(name) === 'test',
-            hasWav,
-            wavName: hasWav ? pairedWavName : '',
-            canConvertToWav: ext === '.opus',
-            hasSourceOpus,
-            sourceOpusName: hasSourceOpus ? pairedOpusName : '',
-            isOpusLocked: ext === '.opus'
+            canConvertToMp3: ext === '.opus',
+            isOpusLocked: ext === '.opus',
+            latestNoteId: latestNote ? latestNote.noteId : '',
+            latestNoteUrl: latestNote ? latestNote.noteUrl : '',
+            latestNoteCreatedAt: latestNote ? latestNote.createdAt : 0,
+            latestMeetingJob
           }
         })
     )

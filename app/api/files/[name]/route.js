@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs'
 import { basename, extname, join } from 'path'
+import { requireSiteAuth } from '../../_lib/admin-auth'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const CORS_HEADERS = {
@@ -11,7 +12,6 @@ const CORS_HEADERS = {
 const MIME_TYPES = {
   '.opus': 'audio/opus',
   '.mp3': 'audio/mpeg',
-  '.wav': 'audio/wav',
   '.webm': 'audio/webm',
   '.ogg': 'audio/ogg',
 }
@@ -94,6 +94,14 @@ async function readFileChunk(filePath, start, end) {
 }
 
 export async function GET(request, { params }) {
+  const auth = await requireSiteAuth(request)
+  if (!auth.ok) {
+    return Response.json(
+      { success: false, error: auth.error },
+      { status: auth.status, headers: CORS_HEADERS }
+    )
+  }
+
   const fileName = sanitizeFileName(params?.name)
   if (!fileName) {
     return Response.json(
@@ -168,6 +176,14 @@ export async function GET(request, { params }) {
 }
 
 export async function DELETE(_request, { params }) {
+  const auth = await requireSiteAuth(_request)
+  if (!auth.ok) {
+    return Response.json(
+      { success: false, error: auth.error },
+      { status: auth.status, headers: CORS_HEADERS }
+    )
+  }
+
   const fileName = sanitizeFileName(params?.name)
   if (!fileName) {
     return Response.json(
@@ -184,9 +200,9 @@ export async function DELETE(_request, { params }) {
     await fs.unlink(filePath)
     deleted.push(fileName)
 
-    if (ext === '.opus' || ext === '.wav') {
+    if (ext === '.opus' || ext === '.mp3') {
       const baseName = fileName.slice(0, -ext.length)
-      for (const siblingName of [`${baseName}.opus`, `${baseName}.wav`, `${baseName}.mp3`]) {
+      for (const siblingName of [`${baseName}.opus`, `${baseName}.mp3`]) {
         if (siblingName === fileName) continue
         try {
           await fs.unlink(join(UPLOAD_DIR, siblingName))

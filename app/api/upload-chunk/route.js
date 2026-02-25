@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs'
 import { extname, join } from 'path'
-import { convertOpusFileToWav } from '../_lib/opus-wav'
+import { enqueueMp3Convert } from '../_lib/mp3-queue'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const TMP_DIR = join(process.cwd(), 'uploads_tmp')
@@ -133,38 +133,43 @@ export async function POST(request) {
       await fs.rename(partPath, finalPath)
 
       const origin = getRequestOrigin(request)
-      const sourceUrl = `${origin}/api/files/${encodeURIComponent(finalName)}`
-      let wavFilename = ''
-      let wavUrl = ''
+      let sourceUrl = `${origin}/api/files/${encodeURIComponent(finalName)}`
+      let mp3Filename = ''
+      let mp3Url = ''
       let autoConvertError = ''
+      let outputFilename = finalName
       if (extname(finalName).toLowerCase() === '.opus') {
         try {
-          const converted = await convertOpusFileToWav({
+          const converted = await enqueueMp3Convert({
             uploadDir: UPLOAD_DIR,
             opusFileName: finalName,
             overwrite: true,
+            removeSource: true,
+            source: 'upload-chunk',
           })
-          wavFilename = converted.filename
-          wavUrl = `${origin}/api/files/${encodeURIComponent(converted.filename)}`
+          mp3Filename = converted.filename
+          mp3Url = `${origin}/api/files/${encodeURIComponent(converted.filename)}`
+          outputFilename = converted.filename
+          sourceUrl = ''
         } catch (error) {
           autoConvertError = String(error && error.message ? error.message : error)
-          console.error('[upload-chunk] auto convert wav failed', {
+          console.error('[upload-chunk] auto convert mp3 failed', {
             filename: finalName,
             error: autoConvertError,
             stack: error && error.stack ? String(error.stack) : ''
           })
         }
       }
-      const primaryUrl = wavUrl || sourceUrl
+      const primaryUrl = mp3Url || sourceUrl
       return Response.json(
         {
           success: true,
           done: true,
-          filename: finalName,
+          filename: outputFilename,
           sourceUrl,
-          wavFilename,
-          wavUrl,
-          autoConverted: !!wavUrl,
+          mp3Filename,
+          mp3Url,
+          autoConverted: !!mp3Url,
           autoConvertError,
           url: primaryUrl
         },

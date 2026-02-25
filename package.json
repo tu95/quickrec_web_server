@@ -3,23 +3,28 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --hostname 0.0.0.0 --port 3000",
+    "dev": "NEXT_DIST_DIR=.next-dev next dev --hostname 0.0.0.0 --port 3000",
     "dev:bg": "sh -c 'mkdir -p logs; nohup npm run dev > logs/dev.log 2>&1 & pid=$!; echo $pid > logs/dev.pid; echo \"dev started, pid=$pid\"'",
-    "build": "next build",
-    "start": "next start --hostname 0.0.0.0 --port 3000",
-    "start:trace": "node scripts/start-trace.js",
+    "build": "NEXT_DIST_DIR=.next-prod next build",
+    "start": "NEXT_DIST_DIR=.next-prod next start --hostname 0.0.0.0 --port 3000",
+    "start:trace": "NEXT_DIST_DIR=.next-prod node scripts/start-trace.js",
     "start:bg": "sh -c 'mkdir -p logs; nohup npm run start:trace > logs/start.log 2>&1 & pid=$!; echo $pid > logs/start.pid; echo \"start started, pid=$pid\"'",
     "stop:bg": "node scripts/stop-bg.js",
+    "clean": "node scripts/clean-next.js",
+    "doctor": "node scripts/doctor.js",
     "logs:dev": "sh -c 'tail -f logs/dev.log'",
     "logs:start": "sh -c 'tail -n 200 -f logs/start.log'",
     "logs:supervisor": "sh -c 'tail -n 200 -f logs/supervisor.log'"
   },
   "dependencies": {
+    "ali-oss": "^6.23.0",
+    "multiparty": "^4.2.3",
     "next": "14.x",
     "opusscript": "^0.1.1",
-    "react": "18.x",
-    "react-dom": "18.x",
-    "multiparty": "^4.2.3",
-    "wav": "^1.0.2"
+    "p-queue": "^9.1.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   }
 }
