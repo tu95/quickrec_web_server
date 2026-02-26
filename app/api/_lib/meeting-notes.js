@@ -244,6 +244,19 @@ function buildAsrSubtaskError(failedSubtask) {
   return parts.join(' | ')
 }
 
+function hasNoWordsSignal(input) {
+  const text = String(input || '').toUpperCase()
+  if (!text) return false
+  return text.includes('ASR_RESPONSE_HAVE_NO_WORDS') || text.includes('NO_WORDS')
+}
+
+function isAsrNoWordsSubtask(failedSubtask) {
+  if (!failedSubtask || typeof failedSubtask !== 'object') return false
+  const code = String(failedSubtask.code || '')
+  const message = String(failedSubtask.message || '')
+  return hasNoWordsSignal(code) || hasNoWordsSignal(message)
+}
+
 function buildAsrTopLevelError(data, fallbackStatus) {
   const code = String(data?.code || data?.output?.code || '').trim()
   const message = String(
@@ -375,6 +388,19 @@ function extractNoteTitle(markdown, fileName) {
   return fallbackTitleFromFileName(fileName)
 }
 
+function buildNoSpeechMarkdown(fileName) {
+  const base = fallbackTitleFromFileName(fileName)
+  return [
+    '# 空白录音（无有效语音）',
+    '',
+    `源文件：${base}`,
+    '',
+    '本次音频未检测到可识别的语音内容。',
+    '- 可能是静音、环境噪声为主或音量过低',
+    '- 可重新录制后再次生成纪要',
+  ].join('\n')
+}
+
 function resolveProvider(config, options) {
   const providers = Array.isArray(config?.llm?.providers) ? config.llm.providers : []
   const providerId = String(options?.providerId || config?.llm?.defaultProviderId || '')
@@ -497,6 +523,14 @@ async function transcribeWithAsr(config, audioUrl, options = null) {
     const failedSubtask = pickFailedAsrSubtask(queryData)
     if (failedSubtask) {
       const detail = buildAsrSubtaskError(failedSubtask)
+      if (isAsrNoWordsSubtask(failedSubtask)) {
+        return {
+          transcript: '',
+          transcriptionUrl: pickTranscriptionUrl(queryData),
+          noSpeech: true,
+          noSpeechDetail: detail || 'ASR_RESPONSE_HAVE_NO_WORDS'
+        }
+      }
       throw new Error(`ASR 子任务失败: ${detail || '未知错误'}`)
     }
     if (status.includes('FAIL')) {
@@ -516,7 +550,12 @@ async function transcribeWithAsr(config, audioUrl, options = null) {
       appendTranscriptLines(lines, transcriptPayload)
       const transcript = lines.join('\n').trim()
       if (!transcript) {
-        throw new Error('ASR 结果解析失败: transcript 为空')
+        return {
+          transcript: '',
+          transcriptionUrl: url,
+          noSpeech: true,
+          noSpeechDetail: 'ASR_TRANSCRIPT_EMPTY'
+        }
       }
       await checkJob()
       return {
@@ -535,6 +574,14 @@ async function transcribeWithAsr(config, audioUrl, options = null) {
       }
     }
     if (status.includes('SUCCESS')) {
+      if (hasNoWordsSignal(queryData?.code) || hasNoWordsSignal(queryData?.message) || hasNoWordsSignal(queryData?.output?.message)) {
+        return {
+          transcript: '',
+          transcriptionUrl: '',
+          noSpeech: true,
+          noSpeechDetail: 'ASR_RESPONSE_HAVE_NO_WORDS'
+        }
+      }
       throw new Error('ASR 任务成功但未返回 transcription_url')
     }
   }
@@ -630,42 +677,54 @@ async function runMeetingJob(job) {
     const transcriptText = String(asrResult?.transcript || '')
     const maxChars = Number(config?.meeting?.maxTranscriptChars || 120000)
     const normalizedTranscript = transcriptText.slice(0, maxChars)
+    const asrNoSpeech = asrResult?.noSpeech === true || !normalizedTranscript.trim()
+    const asrNoSpeechDetail = String(asrResult?.noSpeechDetail || '').trim()
 
-    const provider = resolveProvider(config, current.options)
-    const prompt = resolvePrompt(config, current.options)
-    const model = String(
-      current.options?.model ||
-      provider?.selectedModel ||
-      config?.llm?.defaultModel ||
-      ''
-    )
-    if (!model) {
-      throw new Error('未配置默认模型，请在设置页为提供商选择模型')
-    }
+    let provider = { id: 'asr-only', name: 'ASR-only' }
+    let prompt = { id: 'asr-empty', name: 'ASR 空白音频兜底' }
+    let model = ''
+    let completion = { usage: null }
+    let markdown = ''
 
-    current = await updateJob(current, { stage: 'llm' })
-    await ensureJobNotCancelled(current)
-    const promptText = buildAdaptiveSummaryPrompt(normalizedTranscript, prompt.content)
-    const completion = await runChat(provider, {
-      model,
-      temperature: 0.2,
-      maxTokens: 2000,
-      messages: [
-        {
-          role: 'system',
-          content: '你是专业会议纪要助手，请严格输出结构化且可执行的会议纪要。'
-        },
-        {
-          role: 'user',
-          content: promptText
-        }
-      ]
-    })
-    await ensureJobNotCancelled(current)
+    if (asrNoSpeech) {
+      markdown = buildNoSpeechMarkdown(current.fileName)
+    } else {
+      provider = resolveProvider(config, current.options)
+      prompt = resolvePrompt(config, current.options)
+      model = String(
+        current.options?.model ||
+        provider?.selectedModel ||
+        config?.llm?.defaultModel ||
+        ''
+      )
+      if (!model) {
+        throw new Error('未配置默认模型，请在设置页为提供商选择模型')
+      }
 
-    const markdown = String(completion?.text || '').trim()
-    if (!markdown) {
-      throw new Error('LLM 返回为空，请更换模型或 Prompt')
+      current = await updateJob(current, { stage: 'llm' })
+      await ensureJobNotCancelled(current)
+      const promptText = buildAdaptiveSummaryPrompt(normalizedTranscript, prompt.content)
+      completion = await runChat(provider, {
+        model,
+        temperature: 0.2,
+        maxTokens: 2000,
+        messages: [
+          {
+            role: 'system',
+            content: '你是专业会议纪要助手，请严格输出结构化且可执行的会议纪要。'
+          },
+          {
+            role: 'user',
+            content: promptText
+          }
+        ]
+      })
+      await ensureJobNotCancelled(current)
+
+      markdown = String(completion?.text || '').trim()
+      if (!markdown) {
+        throw new Error('LLM 返回为空，请更换模型或 Prompt')
+      }
     }
 
     current = await updateJob(current, { stage: 'saving' })
@@ -691,7 +750,9 @@ async function runMeetingJob(job) {
       transcript: transcriptText,
       transcriptChars: transcriptText.length,
       llmTranscriptChars: normalizedTranscript.length,
-      llmTranscriptTruncated: normalizedTranscript.length < transcriptText.length
+      llmTranscriptTruncated: normalizedTranscript.length < transcriptText.length,
+      asrNoSpeech,
+      asrNoSpeechDetail
     }
     const metadata = {
       id: noteId,
@@ -704,6 +765,8 @@ async function runMeetingJob(job) {
       promptName: prompt.name,
       noteTitle,
       transcriptChars: normalizedTranscript.length,
+      asrNoSpeech,
+      asrNoSpeechDetail,
       hasAsrArchive: true,
       asrArchiveUrl: `/api/meeting-notes/${encodeURIComponent(noteId)}/asr`,
       usage: completion.usage || null
