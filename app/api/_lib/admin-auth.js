@@ -4,6 +4,7 @@ import { readConfig } from './config-store'
 const SITE_COOKIE_NAME = 'zr_site_session'
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7
 const DEFAULT_SITE_PASSWORD = 'H*ZM7VwhhepPVhwP*HmC83LzWXn9o8'
+const DEFAULT_READONLY_SITE_PASSWORD = 'test20260226'
 
 function base64UrlEncode(input) {
   return Buffer.from(input, 'utf8')
@@ -54,10 +55,11 @@ export function buildClearSiteSessionCookie() {
   return `${SITE_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
 }
 
-export function createSiteToken(key) {
+export function createSiteToken(key, role = 'admin') {
   const payload = JSON.stringify({
     exp: Date.now() + SESSION_TTL_MS,
-    nonce: crypto.randomBytes(12).toString('hex')
+    nonce: crypto.randomBytes(12).toString('hex'),
+    role: String(role || 'admin')
   })
   const encodedPayload = base64UrlEncode(payload)
   const signature = signPayload(encodedPayload, key)
@@ -65,25 +67,32 @@ export function createSiteToken(key) {
 }
 
 function verifySiteToken(token, key) {
-  if (!token || !key) return false
+  if (!token || !key) return null
   const parts = String(token).split('.')
-  if (parts.length !== 2) return false
+  if (parts.length !== 2) return null
   const payloadEncoded = parts[0]
   const signature = parts[1]
   const expected = signPayload(payloadEncoded, key)
   if (signature.length !== expected.length) {
-    return false
+    return null
   }
   if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
-    return false
+    return null
   }
   try {
     const payloadText = base64UrlDecode(payloadEncoded)
     const payload = JSON.parse(payloadText)
     const exp = Number(payload?.exp || 0)
-    return Number.isFinite(exp) && exp > Date.now()
+    if (!(Number.isFinite(exp) && exp > Date.now())) {
+      return null
+    }
+    const role = String(payload?.role || 'admin')
+    return {
+      exp,
+      role: role === 'readonly' ? 'readonly' : 'admin'
+    }
   } catch {
-    return false
+    return null
   }
 }
 
@@ -93,10 +102,17 @@ export async function getSitePassword(config) {
   return fromConfig || fromEnv || DEFAULT_SITE_PASSWORD
 }
 
+export async function getReadonlySitePassword(config) {
+  const fromConfig = String(config?.access?.readonlySitePassword || '').trim()
+  const fromEnv = String(process.env.SITE_ACCESS_READONLY_PASSWORD || '').trim()
+  return fromConfig || fromEnv || DEFAULT_READONLY_SITE_PASSWORD
+}
+
 export async function requireSiteAuth(request) {
   const config = await readConfig()
-  const key = await getSitePassword(config)
-  if (!key) {
+  const adminKey = await getSitePassword(config)
+  const readonlyKey = await getReadonlySitePassword(config)
+  if (!adminKey) {
     return {
       ok: false,
       status: 403,
@@ -105,14 +121,23 @@ export async function requireSiteAuth(request) {
   }
   const cookieMap = parseCookiesFromHeader(request.headers.get('cookie'))
   const token = cookieMap[SITE_COOKIE_NAME]
-  if (!verifySiteToken(token, key)) {
+  const adminToken = verifySiteToken(token, adminKey)
+  const readonlyToken = !adminToken ? verifySiteToken(token, readonlyKey) : null
+  const session = adminToken || readonlyToken
+  if (!session) {
     return {
       ok: false,
       status: 401,
       error: '未授权，请先登录网站'
     }
   }
-  return { ok: true, config }
+  const role = session.role === 'readonly' ? 'readonly' : 'admin'
+  return {
+    ok: true,
+    config,
+    role,
+    readOnly: role !== 'admin'
+  }
 }
 
 // Backward compatibility

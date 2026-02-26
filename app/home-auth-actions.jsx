@@ -42,7 +42,24 @@ export default function HomeAuthActions() {
           textDecoration: 'none'
         }}
       >
-        打开 AI 设置中心
+        设置
+      </a>
+      <a
+        href="/preview_package"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          minHeight: 42,
+          padding: '8px 14px',
+          borderRadius: 999,
+          border: '1px solid rgba(28, 107, 73, 0.3)',
+          background: 'rgba(243, 255, 246, 0.86)',
+          color: '#1d6b4a',
+          fontWeight: 700,
+          textDecoration: 'none'
+        }}
+      >
+        🔥🔥🔥🔥获取安装包
       </a>
       <button
         type="button"

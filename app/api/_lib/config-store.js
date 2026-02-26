@@ -7,13 +7,18 @@ function cloneJson(value) {
   return JSON.parse(JSON.stringify(value))
 }
 
+function hasOwn(obj, key) {
+  return !!obj && Object.prototype.hasOwnProperty.call(obj, key)
+}
+
 function nowId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
 export const DEFAULT_CONFIG = {
   access: {
-    sitePassword: 'H*ZM7VwhhepPVhwP*HmC83LzWXn9o8'
+    sitePassword: 'H*ZM7VwhhepPVhwP*HmC83LzWXn9o8',
+    readonlySitePassword: 'test20260226'
   },
   llm: {
     providers: [
@@ -72,8 +77,31 @@ export const DEFAULT_CONFIG = {
   meeting: {
     maxTranscriptChars: 120000,
     outputLanguage: 'zh-CN',
-    outputFormat: 'markdown'
+    outputFormat: 'markdown',
+    autoGenerateOnMp3Upload: false
   }
+}
+
+function maskSecret(raw) {
+  const value = String(raw || '')
+  if (!value) return ''
+  if (value.length <= 12) {
+    const headLen = Math.min(3, Math.max(1, Math.floor(value.length / 2)))
+    const tailLen = Math.min(3, Math.max(1, value.length - headLen))
+    const head = value.slice(0, headLen)
+    const tail = value.slice(-tailLen)
+    return `${head}${'*'.repeat(6)}${tail}`
+  }
+  const head = value.slice(0, 6)
+  const tail = value.slice(-6)
+  return `${head}${'*'.repeat(Math.max(6, value.length - 12))}${tail}`
+}
+
+function isMaskedEquivalent(inputValue, plainValue) {
+  const input = String(inputValue || '')
+  const plain = String(plainValue || '')
+  if (!input || !plain) return false
+  return input === maskSecret(plain)
 }
 
 function normalizeProvider(input) {
@@ -155,7 +183,8 @@ function normalizeConfig(raw) {
 
   return {
     access: {
-      sitePassword: String(data?.access?.sitePassword || data?.access?.settingsPageKey || DEFAULT_CONFIG.access.sitePassword)
+      sitePassword: String(data?.access?.sitePassword || data?.access?.settingsPageKey || DEFAULT_CONFIG.access.sitePassword),
+      readonlySitePassword: String(data?.access?.readonlySitePassword || DEFAULT_CONFIG.access.readonlySitePassword)
     },
     llm: {
       providers,
@@ -199,7 +228,8 @@ function normalizeConfig(raw) {
     meeting: {
       maxTranscriptChars: Number(data?.meeting?.maxTranscriptChars || DEFAULT_CONFIG.meeting.maxTranscriptChars),
       outputLanguage: String(data?.meeting?.outputLanguage || DEFAULT_CONFIG.meeting.outputLanguage),
-      outputFormat: String(data?.meeting?.outputFormat || DEFAULT_CONFIG.meeting.outputFormat)
+      outputFormat: String(data?.meeting?.outputFormat || DEFAULT_CONFIG.meeting.outputFormat),
+      autoGenerateOnMp3Upload: data?.meeting?.autoGenerateOnMp3Upload === true
     }
   }
 }
@@ -218,6 +248,121 @@ export async function readConfig() {
   const text = await fs.readFile(CONFIG_PATH, 'utf8')
   const parsed = JSON.parse(text)
   return normalizeConfig(parsed)
+}
+
+export function sanitizeConfigForClient(inputConfig) {
+  const config = normalizeConfig(inputConfig)
+  const out = cloneJson(config)
+
+  out.access.sitePassword = maskSecret(config.access.sitePassword)
+  out.access.readonlySitePassword = maskSecret(config.access.readonlySitePassword)
+  out.aliyun.oss.accessKeyId = maskSecret(config.aliyun.oss.accessKeyId)
+  out.aliyun.oss.accessKeySecret = maskSecret(config.aliyun.oss.accessKeySecret)
+  out.aliyun.asr.apiKey = maskSecret(config.aliyun.asr.apiKey)
+  out.llm.providers = config.llm.providers.map(provider => ({
+    ...provider,
+    apiKey: maskSecret(provider.apiKey)
+  }))
+
+  return out
+}
+
+function mergeProviderSecrets(currentProviders, incomingProviders) {
+  const currentList = Array.isArray(currentProviders) ? currentProviders : []
+  const incomingList = Array.isArray(incomingProviders) ? incomingProviders : []
+  const byId = new Map()
+  for (const item of currentList) {
+    byId.set(String(item?.id || ''), item)
+  }
+
+  return incomingList.map((incomingProvider, index) => {
+    const next = incomingProvider && typeof incomingProvider === 'object'
+      ? { ...incomingProvider }
+      : {}
+    const currentById = byId.get(String(next.id || ''))
+    const currentByIndex = currentList[index]
+    const currentProvider = currentById || currentByIndex || null
+    const currentApiKey = String(currentProvider?.apiKey || '')
+    const hasIncomingApiKey = hasOwn(next, 'apiKey')
+    const incomingApiKey = String(next.apiKey || '')
+
+    if (!hasIncomingApiKey || isMaskedEquivalent(incomingApiKey, currentApiKey)) {
+      next.apiKey = currentApiKey
+    }
+
+    return next
+  })
+}
+
+export function mergeConfigWithSecretPreserve(currentConfig, incomingConfig) {
+  const current = normalizeConfig(currentConfig)
+  const incoming = incomingConfig && typeof incomingConfig === 'object' ? incomingConfig : {}
+
+  const merged = {
+    ...current,
+    ...incoming,
+    access: {
+      ...current.access,
+      ...(incoming.access && typeof incoming.access === 'object' ? incoming.access : {})
+    },
+    llm: {
+      ...current.llm,
+      ...(incoming.llm && typeof incoming.llm === 'object' ? incoming.llm : {})
+    },
+    prompts: {
+      ...current.prompts,
+      ...(incoming.prompts && typeof incoming.prompts === 'object' ? incoming.prompts : {})
+    },
+    aliyun: {
+      ...current.aliyun,
+      ...(incoming.aliyun && typeof incoming.aliyun === 'object' ? incoming.aliyun : {}),
+      oss: {
+        ...current.aliyun.oss,
+        ...(incoming?.aliyun?.oss && typeof incoming.aliyun.oss === 'object' ? incoming.aliyun.oss : {})
+      },
+      asr: {
+        ...current.aliyun.asr,
+        ...(incoming?.aliyun?.asr && typeof incoming.aliyun.asr === 'object' ? incoming.aliyun.asr : {})
+      }
+    },
+    meeting: {
+      ...current.meeting,
+      ...(incoming.meeting && typeof incoming.meeting === 'object' ? incoming.meeting : {})
+    }
+  }
+
+  const hasSitePassword = hasOwn(incoming?.access, 'sitePassword')
+  if (!hasSitePassword || isMaskedEquivalent(merged.access.sitePassword, current.access.sitePassword)) {
+    merged.access.sitePassword = current.access.sitePassword
+  }
+  const hasReadonlySitePassword = hasOwn(incoming?.access, 'readonlySitePassword')
+  if (!hasReadonlySitePassword || isMaskedEquivalent(merged.access.readonlySitePassword, current.access.readonlySitePassword)) {
+    merged.access.readonlySitePassword = current.access.readonlySitePassword
+  }
+
+  const hasAccessKeyId = hasOwn(incoming?.aliyun?.oss, 'accessKeyId')
+  if (!hasAccessKeyId || isMaskedEquivalent(merged.aliyun.oss.accessKeyId, current.aliyun.oss.accessKeyId)) {
+    merged.aliyun.oss.accessKeyId = current.aliyun.oss.accessKeyId
+  }
+
+  const hasAccessKeySecret = hasOwn(incoming?.aliyun?.oss, 'accessKeySecret')
+  if (!hasAccessKeySecret || isMaskedEquivalent(merged.aliyun.oss.accessKeySecret, current.aliyun.oss.accessKeySecret)) {
+    merged.aliyun.oss.accessKeySecret = current.aliyun.oss.accessKeySecret
+  }
+
+  const hasAsrApiKey = hasOwn(incoming?.aliyun?.asr, 'apiKey')
+  if (!hasAsrApiKey || isMaskedEquivalent(merged.aliyun.asr.apiKey, current.aliyun.asr.apiKey)) {
+    merged.aliyun.asr.apiKey = current.aliyun.asr.apiKey
+  }
+
+  const hasProviders = Array.isArray(incoming?.llm?.providers)
+  if (hasProviders) {
+    merged.llm.providers = mergeProviderSecrets(current.llm.providers, incoming.llm.providers)
+  } else {
+    merged.llm.providers = current.llm.providers
+  }
+
+  return normalizeConfig(merged)
 }
 
 export async function writeConfig(inputConfig) {

@@ -69,7 +69,6 @@ export default function AsrArchivePanel({ noteId, asrArchiveUrl, hasAsrArchive }
       await navigator.clipboard.writeText(transcript)
       setCopyDone(true)
       window.setTimeout(() => setCopyDone(false), 1200)
-      setOpen(true)
     } catch (err) {
       setError(String(err?.message || err))
     } finally {

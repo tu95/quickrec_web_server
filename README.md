@@ -53,6 +53,46 @@ tail -n 100 logs/supervisor.log
 npm run stop:bg
 ```
 
+### 6. 机型预览安装二维码（本地生成 + React 页面展示）
+
+说明：
+- 生成动作依赖本机 `zeus`，请在你有 Zepp 开发环境的电脑执行。
+- 服务器不需要安装 `zeus`，只负责托管生成结果数据与二维码图片。
+- 页面入口：`http://你的IP:3000/preview_package`（Next.js React 页面，首页也有“测试安装”按钮）。
+
+先在项目根目录安装脚本依赖（只需一次）：
+
+```bash
+cd ..
+npm install
+```
+
+在项目根目录执行批量生成：
+
+```bash
+npm run preview:packages
+# 等价命令：
+# node scripts/preview/generate-preview-packages.mjs
+# 指定并发（默认 4，范围 1-8）：
+# npm run preview:packages -- --concurrency 4
+```
+
+生成产物：
+- `web_server/public/preview_package/preview-packages.json`（机型与安装链接索引）
+- `web_server/public/preview_package/qrcodes/*.png`（二维码图片）
+- `web_server/public/preview_package/logs/*.log`（每个 target 的原始构建日志）
+
+仅初始化 `preview-packages.json` 骨架（不执行 zeus）：
+
+```bash
+node scripts/preview/generate-preview-packages.mjs --scaffold-only
+```
+
+target 说明：
+- 脚本会自动做机型别名映射（如 `Active 2 (Round)` -> `Amazfit Active 2 (Round)`）。
+- 若当前 `zeus` 版本不支持某机型，脚本会跳过并在 `preview-packages.json` 里写入失败原因与建议 target，不会卡在交互选择。
+- 安装链接协议是 `zpkd1://...`（Zepp 安装协议），不是 `http(s)`。
+
 ## API
 
 ### POST /api/upload

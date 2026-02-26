@@ -2,6 +2,8 @@ import { promises as fs } from 'fs'
 import { extname, join } from 'path'
 import { networkInterfaces } from 'os'
 import { enqueueMp3Convert } from '../_lib/mp3-queue'
+import { readConfig } from '../_lib/config-store'
+import { createMeetingJob } from '../_lib/meeting-notes'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const CORS_HEADERS = {
@@ -88,6 +90,8 @@ export async function POST(request) {
     let mp3Filename = ''
     let mp3Url = ''
     let autoConvertError = ''
+    let autoMeetingJobId = ''
+    let autoMeetingError = ''
     let outputFilename = filename
     let outputSize = buffer.length
     if (extname(filename).toLowerCase() === '.opus') {
@@ -114,6 +118,20 @@ export async function POST(request) {
       }
     }
     const primaryUrl = mp3Url || sourceUrl
+    if (extname(outputFilename).toLowerCase() === '.mp3') {
+      try {
+        const config = await readConfig()
+        if (config?.meeting?.autoGenerateOnMp3Upload === true) {
+          const job = await createMeetingJob({
+            fileName: outputFilename,
+            origin: 'auto-upload'
+          })
+          autoMeetingJobId = String(job?.id || '')
+        }
+      } catch (error) {
+        autoMeetingError = String(error && error.message ? error.message : error)
+      }
+    }
 
     return Response.json(
       {
@@ -125,6 +143,8 @@ export async function POST(request) {
         mp3Url,
         autoConverted: !!mp3Url,
         autoConvertError,
+        autoMeetingJobId,
+        autoMeetingError,
         url: primaryUrl,
       },
       { headers: CORS_HEADERS }

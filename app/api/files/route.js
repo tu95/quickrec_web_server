@@ -79,10 +79,12 @@ async function loadLatestNoteMap() {
       const createdAt = toNumber(metadata?.createdAt)
       const previous = byFileName.get(sourceFileName)
       if (!previous || createdAt >= previous.createdAt) {
+        const noteTitle = String(metadata?.noteTitle || '').trim()
         byFileName.set(sourceFileName, {
           noteId,
           noteUrl: `/notes/${encodeURIComponent(noteId)}`,
-          createdAt
+          createdAt,
+          noteTitle
         })
       }
     }
@@ -171,6 +173,7 @@ export async function GET(request) {
             latestNoteId: latestNote ? latestNote.noteId : '',
             latestNoteUrl: latestNote ? latestNote.noteUrl : '',
             latestNoteCreatedAt: latestNote ? latestNote.createdAt : 0,
+            latestNoteTitle: latestNote ? String(latestNote.noteTitle || '') : '',
             latestMeetingJob
           }
         })

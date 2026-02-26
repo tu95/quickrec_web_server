@@ -7,6 +7,12 @@ function formatDate(timestamp) {
   return new Date(timestamp).toLocaleString('zh-CN')
 }
 
+function getDisplayTitle(file) {
+  const title = String(file?.latestNoteTitle || '').trim()
+  if (title) return title
+  return String(file?.name || '').trim()
+}
+
 function isPlayableExt(ext) {
   const e = String(ext || '').toLowerCase()
   return e === '.mp3' || e === '.ogg' || e === '.webm'
@@ -36,6 +42,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
   const [loading, setLoading] = useState(false)
   const [busyMap, setBusyMap] = useState({})
   const [noteBusyMap, setNoteBusyMap] = useState({})
+  const [noteCancelBusyMap, setNoteCancelBusyMap] = useState({})
   const [noteJobMap, setNoteJobMap] = useState({})
   const [noteErrorLog, setNoteErrorLog] = useState('')
   const [message, setMessage] = useState('')
@@ -79,6 +86,10 @@ export default function FileManagerClient({ origin, initialFiles }) {
 
   function setNoteBusy(name, value) {
     setNoteBusyMap(prev => ({ ...prev, [name]: value }))
+  }
+
+  function setNoteCancelBusy(name, value) {
+    setNoteCancelBusyMap(prev => ({ ...prev, [name]: value }))
   }
 
   function setNoteJob(name, value) {
@@ -146,6 +157,10 @@ export default function FileManagerClient({ origin, initialFiles }) {
           openMeetingNote(job)
           return
         }
+        if (job.status === 'cancelled') {
+          setMessage('纪要任务已取消')
+          return
+        }
         if (job.status === 'failed') {
           throw new Error(job.error || '纪要生成失败')
         }
@@ -157,6 +172,30 @@ export default function FileManagerClient({ origin, initialFiles }) {
       setNoteErrorLog(text)
     } finally {
       setNoteBusy(fileName, false)
+    }
+  }
+
+  async function cancelMeetingNote(fileName, noteJob) {
+    const jobId = String(noteJob?.id || '')
+    if (!fileName || !jobId) return
+    setNoteCancelBusy(fileName, true)
+    setMessage('')
+    try {
+      const res = await fetch(`/api/meeting-notes/jobs/${encodeURIComponent(jobId)}/cancel`, {
+        method: 'POST'
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.success || !data?.job) {
+        throw new Error((data && data.error) ? data.error : `HTTP ${res.status}`)
+      }
+      setNoteJob(fileName, data.job)
+      setNoteBusy(fileName, false)
+      setMessage('已取消纪要生成，可重新发起')
+      await refreshFiles()
+    } catch (error) {
+      setMessage(`取消失败: ${String(error?.message || error)}`)
+    } finally {
+      setNoteCancelBusy(fileName, false)
     }
   }
 
@@ -228,7 +267,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
     }
   }, [player.url, player.token])
 
-  function renderActions(file, busy, noteBusy, noteJob) {
+  function renderActions(file, busy, noteBusy, noteCancelBusy, noteJob) {
     const fileUrl = `/api/files/${encodeURIComponent(file.name)}`
     const isOpus = file.ext === '.opus'
     const canGenerateNote = isPlayableExt(file.ext) || isOpus
@@ -263,9 +302,19 @@ export default function FileManagerClient({ origin, initialFiles }) {
             style={noteBtnStyle}
             className="file-action-btn"
             onClick={() => generateMeetingNote(file.name)}
-            disabled={noteBusy}
+            disabled={noteBusy || noteCancelBusy}
           >
             {noteBusy ? '纪要生成中...' : '一键生成会议纪要'}
+          </button>
+        )}
+        {canGenerateNote && isMeetingJobRunning(noteJob) && (
+          <button
+            style={cancelNoteBtnStyle}
+            className="file-action-btn"
+            onClick={() => cancelMeetingNote(file.name, noteJob)}
+            disabled={noteCancelBusy}
+          >
+            {noteCancelBusy ? '取消中...' : '取消生成纪要'}
           </button>
         )}
         {canGenerateNote && noteViewUrl && (
@@ -291,6 +340,8 @@ export default function FileManagerClient({ origin, initialFiles }) {
             <span style={statusBadgeStyle}>
               {noteJob.status === 'completed'
                 ? '纪要已完成'
+                : noteJob.status === 'cancelled'
+                  ? '纪要已取消'
                 : noteJob.status === 'failed'
                   ? `失败: ${noteJob.error || '未知错误'}`
                   : `处理中: ${noteJob.stage || noteJob.status}`}
@@ -372,7 +423,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
           <table style={tableStyle}>
             <thead>
               <tr style={{ background: '#fafafa' }}>
-                <th style={headerStyle}>文件名</th>
+                <th style={headerStyle}>标题</th>
                 <th style={headerStyle}>大小</th>
                 <th style={headerStyle}>上传时间</th>
                 <th style={headerStyle}>操作</th>
@@ -386,15 +437,21 @@ export default function FileManagerClient({ origin, initialFiles }) {
                   ? file.latestMeetingJob
                   : null
                 const noteJob = inMemoryNoteJob || persistedNoteJob
-                const noteBusy = !!noteBusyMap[file.name] || isMeetingJobRunning(noteJob)
+                const noteCancelBusy = !!noteCancelBusyMap[file.name]
+                const noteBusy = !!noteBusyMap[file.name] || noteCancelBusy || isMeetingJobRunning(noteJob)
                 return (
                   <tr key={file.name} style={{ borderBottom: '1px solid #eee' }}>
-                    <td style={fileNameCellStyle}>{file.name}</td>
+                    <td style={fileNameCellStyle}>
+                      <div style={fileTitleStyle}>{getDisplayTitle(file)}</div>
+                      {String(file.latestNoteTitle || '').trim() && (
+                        <div style={fileNameSubtleStyle}>{file.name}</div>
+                      )}
+                    </td>
                     <td style={cellStyle}>{file.sizeFormatted}</td>
                     <td style={cellStyle}>{formatDate(file.createdAt)}</td>
                     <td style={cellStyle}>
                       <div style={desktopActionsWrapStyle} className="file-actions">
-                        {renderActions(file, busy, noteBusy, noteJob)}
+                        {renderActions(file, busy, noteBusy, noteCancelBusy, noteJob)}
                       </div>
                     </td>
                   </tr>
@@ -470,6 +527,22 @@ const fileNameCellStyle = {
   wordBreak: 'break-all'
 }
 
+const fileTitleStyle = {
+  fontSize: 14,
+  fontWeight: 700,
+  color: '#1e3940',
+  lineHeight: 1.4
+}
+
+const fileNameSubtleStyle = {
+  marginTop: 4,
+  fontSize: 12,
+  color: '#6c8388',
+  lineHeight: 1.35,
+  wordBreak: 'break-all',
+  fontWeight: 500
+}
+
 const linkStyle = {
   color: '#0e6f8a',
   textDecoration: 'none',
@@ -519,6 +592,18 @@ const noteBtnStyle = {
   border: '1px solid rgba(88, 84, 201, 0.34)',
   background: 'linear-gradient(135deg, rgba(126, 214, 255, 0.25), rgba(255, 188, 138, 0.26))',
   color: '#2f436f',
+  borderRadius: 999,
+  padding: '10px 14px',
+  minHeight: 44,
+  cursor: 'pointer',
+  fontWeight: 700
+}
+
+const cancelNoteBtnStyle = {
+  fontSize: 13,
+  border: '1px solid rgba(177, 115, 15, 0.38)',
+  background: 'linear-gradient(180deg, #fff8ea 0%, #ffefcd 100%)',
+  color: '#845008',
   borderRadius: 999,
   padding: '10px 14px',
   minHeight: 44,

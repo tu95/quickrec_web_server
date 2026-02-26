@@ -10,7 +10,8 @@ export async function GET(request) {
   }
   return Response.json({
     success: true,
-    authenticated: true
+    authenticated: true,
+    role: auth.role || 'admin',
+    readOnly: auth.readOnly === true
   })
 }
-

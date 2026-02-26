@@ -9,6 +9,7 @@ const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const NOTES_DIR = join(UPLOAD_DIR, 'meeting_notes')
 const JOBS_DIR = join(NOTES_DIR, 'jobs')
 const ASR_ARCHIVE_DIR = join(NOTES_DIR, 'asr')
+const TERMINAL_JOB_STATUS = new Set(['completed', 'failed', 'cancelled'])
 
 const JOBS = new Map()
 
@@ -29,6 +30,24 @@ function makeId(prefix) {
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function normalizeJobStatus(status) {
+  return String(status || '').trim().toLowerCase()
+}
+
+function isTerminalJobStatus(status) {
+  return TERMINAL_JOB_STATUS.has(normalizeJobStatus(status))
+}
+
+function createJobCancelledError(message) {
+  const error = new Error(String(message || 'job cancelled'))
+  error.code = 'JOB_CANCELLED'
+  return error
+}
+
+function isJobCancelledError(error) {
+  return String(error?.code || '') === 'JOB_CANCELLED'
 }
 
 function buildOrigin(request) {
@@ -93,13 +112,44 @@ async function readPersistedJob(jobId) {
   }
 }
 
-async function updateJob(job, patch) {
+async function getLatestJobState(jobId) {
+  const safeJobId = safeEntityId(jobId)
+  if (!safeJobId) return null
+  const inMemory = JOBS.get(safeJobId)
+  if (inMemory) return inMemory
+  const stored = await readPersistedJob(safeJobId)
+  if (stored) {
+    JOBS.set(safeJobId, stored)
+  }
+  return stored
+}
+
+async function ensureJobNotCancelled(jobOrId) {
+  const id = typeof jobOrId === 'string' ? jobOrId : String(jobOrId?.id || '')
+  if (!id) return
+  const latest = await getLatestJobState(id)
+  const status = normalizeJobStatus(latest?.status)
+  if (status === 'cancelled') {
+    throw createJobCancelledError('job cancelled')
+  }
+}
+
+async function updateJob(job, patch, options = null) {
+  const force = options?.force === true
+  const latest = await getLatestJobState(job.id) || job
+  const latestStatus = normalizeJobStatus(latest?.status)
+  const patchStatus = normalizeJobStatus(patch?.status)
+  if (!force && isTerminalJobStatus(latestStatus)) {
+    if (!patchStatus || patchStatus !== latestStatus) {
+      return latest
+    }
+  }
   const next = {
-    ...job,
+    ...latest,
     ...patch,
     updatedAt: Date.now()
   }
-  JOBS.set(job.id, next)
+  JOBS.set(next.id, next)
   await persistJob(next)
   return next
 }
@@ -276,6 +326,7 @@ function buildAdaptiveSummaryPrompt(transcript, template) {
     '输出要求：',
     '- 必须使用中文 Markdown。',
     '- 第一行输出：`内容类型判断：会议纪要` 或 `内容类型判断：口头记录总结`。',
+    '- 第二行必须输出一级标题：`# <标题>`，标题要求 8-20 字、简洁且可读。',
     '- 若判断为会议纪要，输出结构：会议主题、关键结论、行动项（负责人/事项/截止时间）、风险与待确认。',
     '- 若判断为口头记录总结，输出结构：主题摘要、核心观点、待办清单、待确认与补充信息。',
     '- 禁止编造未出现的人名、时间和数字；不确定信息请标注“待确认”。',
@@ -283,6 +334,45 @@ function buildAdaptiveSummaryPrompt(transcript, template) {
     '以下是补充提示词和转写原文：',
     basePrompt
   ].join('\n')
+}
+
+function normalizeTitle(text) {
+  return String(text || '')
+    .replace(/^\s+|\s+$/g, '')
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
+    .replace(/\s+/g, ' ')
+}
+
+function fallbackTitleFromFileName(fileName) {
+  const source = String(fileName || '').replace(extname(String(fileName || '')), '').trim()
+  const normalized = normalizeTitle(source.replace(/[_-]+/g, ' '))
+  if (!normalized) return '未命名纪要'
+  if (normalized.length <= 24) return normalized
+  return `${normalized.slice(0, 24)}...`
+}
+
+function extractNoteTitle(markdown, fileName) {
+  const lines = String(markdown || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+
+  for (const line of lines) {
+    if (/^内容类型判断[:：]/.test(line)) continue
+    const headingMatch = line.match(/^#{1,6}\s+(.+)$/)
+    if (headingMatch) {
+      const heading = normalizeTitle(headingMatch[1])
+      if (heading) return heading
+      continue
+    }
+    const titleMatch = line.match(/^标题[:：]\s*(.+)$/)
+    if (titleMatch) {
+      const title = normalizeTitle(titleMatch[1])
+      if (title) return title
+    }
+  }
+
+  return fallbackTitleFromFileName(fileName)
 }
 
 function resolveProvider(config, options) {
@@ -305,7 +395,17 @@ function resolvePrompt(config, options) {
   return prompt
 }
 
-async function transcribeWithAsr(config, audioUrl) {
+async function transcribeWithAsr(config, audioUrl, options = null) {
+  const checkCancelled = typeof options?.checkCancelled === 'function'
+    ? options.checkCancelled
+    : null
+  const checkJob = async () => {
+    if (checkCancelled) {
+      await checkCancelled()
+    }
+  }
+
+  await checkJob()
   const asr = config?.aliyun?.asr || {}
   const diarizationEnabled = asr?.diarizationEnabled !== false
   const apiKey = String(asr?.apiKey || '').trim()
@@ -377,7 +477,9 @@ async function transcribeWithAsr(config, audioUrl) {
   const queryUrl = composeUrl(baseUrl, queryPathTemplate.replace('{task_id}', taskId))
   const startedAt = Date.now()
   while (Date.now() - startedAt < pollingTimeoutMs) {
+    await checkJob()
     await wait(pollingIntervalMs)
+    await checkJob()
     const queryRes = await fetch(queryUrl, {
       method: 'POST',
       headers: {
@@ -404,6 +506,7 @@ async function transcribeWithAsr(config, audioUrl) {
 
     const url = pickTranscriptionUrl(queryData)
     if (url) {
+      await checkJob()
       const transcriptRes = await fetch(url, { cache: 'no-store' })
       const contentType = String(transcriptRes.headers.get('content-type') || '')
       const transcriptPayload = contentType.includes('application/json')
@@ -415,6 +518,7 @@ async function transcribeWithAsr(config, audioUrl) {
       if (!transcript) {
         throw new Error('ASR 结果解析失败: transcript 为空')
       }
+      await checkJob()
       return {
         transcript,
         transcriptionUrl: url
@@ -495,11 +599,14 @@ async function runMeetingJob(job) {
   })
 
   try {
+    await ensureJobNotCancelled(current)
     const config = await readConfig()
+    await ensureJobNotCancelled(current)
     const asrSource = await resolveAsrSourceFile(current.fileName)
     const signedUrlExpiresSec = Number(config?.aliyun?.oss?.asrSignedUrlExpiresSec || 21600)
 
     current = await updateJob(current, { stage: 'uploading' })
+    await ensureJobNotCancelled(current)
     const ossUpload = await uploadLocalFileToOss(config, asrSource.filePath, asrSource.fileName, {
       signedUrlExpiresSec
     })
@@ -516,7 +623,10 @@ async function runMeetingJob(job) {
       asrOssObjectKey: ossUpload.objectKey,
       asrSignedUrlExpiresSec: Number(ossUpload.signedUrlExpiresSec || 0)
     })
-    const asrResult = await transcribeWithAsr(config, asrUrl)
+    const asrResult = await transcribeWithAsr(config, asrUrl, {
+      checkCancelled: () => ensureJobNotCancelled(current.id)
+    })
+    await ensureJobNotCancelled(current)
     const transcriptText = String(asrResult?.transcript || '')
     const maxChars = Number(config?.meeting?.maxTranscriptChars || 120000)
     const normalizedTranscript = transcriptText.slice(0, maxChars)
@@ -534,6 +644,7 @@ async function runMeetingJob(job) {
     }
 
     current = await updateJob(current, { stage: 'llm' })
+    await ensureJobNotCancelled(current)
     const promptText = buildAdaptiveSummaryPrompt(normalizedTranscript, prompt.content)
     const completion = await runChat(provider, {
       model,
@@ -550,6 +661,7 @@ async function runMeetingJob(job) {
         }
       ]
     })
+    await ensureJobNotCancelled(current)
 
     const markdown = String(completion?.text || '').trim()
     if (!markdown) {
@@ -557,6 +669,7 @@ async function runMeetingJob(job) {
     }
 
     current = await updateJob(current, { stage: 'saving' })
+    await ensureJobNotCancelled(current)
     await ensureMeetingDirs()
     const noteId = makeId('note')
     const markdownFileName = `${noteId}.md`
@@ -564,8 +677,8 @@ async function runMeetingJob(job) {
     const metaPath = getNoteMetadataPath(noteId)
     const asrArchivePath = getAsrArchivePath(noteId)
 
-    const sourceName = current.fileName.replace(extname(current.fileName), '')
-    const persistedMarkdown = `# ${sourceName} - 会议纪要\n\n${markdown}\n`
+    const noteTitle = extractNoteTitle(markdown, current.fileName)
+    const persistedMarkdown = `${markdown}\n`
     const asrArchive = {
       noteId,
       fileName: current.fileName,
@@ -589,6 +702,7 @@ async function runMeetingJob(job) {
       model,
       promptId: prompt.id,
       promptName: prompt.name,
+      noteTitle,
       transcriptChars: normalizedTranscript.length,
       hasAsrArchive: true,
       asrArchiveUrl: `/api/meeting-notes/${encodeURIComponent(noteId)}/asr`,
@@ -599,6 +713,7 @@ async function runMeetingJob(job) {
     await fs.writeFile(metaPath, JSON.stringify(metadata, null, 2), 'utf8')
     await fs.writeFile(asrArchivePath, JSON.stringify(asrArchive, null, 2), 'utf8')
 
+    await ensureJobNotCancelled(current)
     await updateJob(current, {
       status: 'completed',
       stage: 'done',
@@ -611,6 +726,14 @@ async function runMeetingJob(job) {
       }
     })
   } catch (error) {
+    if (isJobCancelledError(error)) {
+      await updateJob(current, {
+        status: 'cancelled',
+        stage: 'cancelled',
+        error: ''
+      }, { force: true })
+      return
+    }
     await updateJob(current, {
       status: 'failed',
       stage: 'error',
@@ -658,6 +781,26 @@ export async function getMeetingJob(id) {
   if (!stored) return null
   JOBS.set(jobId, stored)
   return toClientJob(stored)
+}
+
+export async function cancelMeetingJob(id) {
+  const jobId = safeEntityId(id)
+  if (!jobId) return null
+  const job = await getLatestJobState(jobId)
+  if (!job) return null
+
+  const status = normalizeJobStatus(job.status)
+  if (status === 'cancelled' || status === 'completed' || status === 'failed') {
+    return toClientJob(job)
+  }
+
+  const cancelled = await updateJob(job, {
+    status: 'cancelled',
+    stage: 'cancelled',
+    error: '',
+    cancelledAt: Date.now()
+  }, { force: true })
+  return toClientJob(cancelled)
 }
 
 export async function getMeetingNote(noteId) {

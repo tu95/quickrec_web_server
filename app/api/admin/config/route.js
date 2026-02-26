@@ -1,5 +1,10 @@
 import { requireAdminAuth } from '../../_lib/admin-auth'
-import { readConfig, writeConfig } from '../../_lib/config-store'
+import {
+  mergeConfigWithSecretPreserve,
+  readConfig,
+  sanitizeConfigForClient,
+  writeConfig
+} from '../../_lib/config-store'
 import { validateOssConfig } from '../../../../lib/aliyun-validators'
 
 export async function GET(request) {
@@ -11,7 +16,12 @@ export async function GET(request) {
     )
   }
   const config = await readConfig()
-  return Response.json({ success: true, config })
+  return Response.json({
+    success: true,
+    config: sanitizeConfigForClient(config),
+    role: auth.role || 'admin',
+    readOnly: auth.readOnly === true
+  })
 }
 
 export async function PUT(request) {
@@ -20,6 +30,12 @@ export async function PUT(request) {
     return Response.json(
       { success: false, error: auth.error },
       { status: auth.status }
+    )
+  }
+  if (auth.readOnly) {
+    return Response.json(
+      { success: false, error: '只读账号无权修改设置' },
+      { status: 403 }
     )
   }
 
@@ -31,7 +47,8 @@ export async function PUT(request) {
       { status: 400 }
     )
   }
-  const nextPayload = payload
+  const currentConfig = await readConfig()
+  const nextPayload = mergeConfigWithSecretPreserve(currentConfig, payload)
   const ossValidation = validateOssConfig(nextPayload?.aliyun?.oss || {})
   if (!ossValidation.valid) {
     return Response.json(
@@ -54,7 +71,7 @@ export async function PUT(request) {
 
   try {
     const saved = await writeConfig(nextPayload)
-    return Response.json({ success: true, config: saved })
+    return Response.json({ success: true, config: sanitizeConfigForClient(saved) })
   } catch (error) {
     return Response.json(
       { success: false, error: String(error?.message || error) },

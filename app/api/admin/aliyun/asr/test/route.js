@@ -5,10 +5,13 @@ import {
   queryDashscopeAsrTask,
   submitDashscopeAsrTask
 } from '../../../../_lib/aliyun-test'
+import { mergeConfigWithSecretPreserve } from '../../../../_lib/config-store'
 import { logRuntimeError } from '../../../../_lib/runtime-log'
 
 function pickAliyunConfig(body, authConfig) {
-  if (body?.aliyun && typeof body.aliyun === 'object') return body.aliyun
+  if (body?.aliyun && typeof body.aliyun === 'object') {
+    return mergeConfigWithSecretPreserve(authConfig, { aliyun: body.aliyun }).aliyun || {}
+  }
   return authConfig?.aliyun || {}
 }
 

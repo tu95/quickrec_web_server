@@ -39,8 +39,24 @@ const OSS_FIELD_KEYS = [
   'objectPrefix'
 ]
 
+function buildSecretDirtyState(config) {
+  const providerApiKeys = {}
+  const providers = Array.isArray(config?.llm?.providers) ? config.llm.providers : []
+  for (const provider of providers) {
+    providerApiKeys[String(provider?.id || '')] = false
+  }
+  return {
+    sitePassword: false,
+    asrApiKey: false,
+    ossAccessKeyId: false,
+    ossAccessKeySecret: false,
+    providerApiKeys
+  }
+}
+
 export default function SettingsClient() {
   const [config, setConfig] = useState(null)
+  const [readOnly, setReadOnly] = useState(false)
   const [loadingConfig, setLoadingConfig] = useState(true)
   const [saveBusy, setSaveBusy] = useState(false)
   const [message, setMessage] = useState('')
@@ -58,6 +74,7 @@ export default function SettingsClient() {
   const [ossTouchedMap, setOssTouchedMap] = useState({})
   const [languageHintsText, setLanguageHintsText] = useState('zh')
   const [asrExtraText, setAsrExtraText] = useState('{}')
+  const [secretDirty, setSecretDirty] = useState(() => buildSecretDirtyState(null))
 
   useEffect(() => {
     loadConfig().catch(() => {})
@@ -86,10 +103,12 @@ export default function SettingsClient() {
         throw new Error(data?.error || `加载配置失败: HTTP ${res.status}`)
       }
       setConfig(data.config)
+      setReadOnly(data?.readOnly === true)
       setOssFieldErrors({})
       setOssTouchedMap({})
       setLanguageHintsText((data.config?.aliyun?.asr?.languageHints || ['zh']).join(', '))
       setAsrExtraText(JSON.stringify(data.config?.aliyun?.asr?.requestExtraParams || {}, null, 2))
+      setSecretDirty(buildSecretDirtyState(data.config))
     } catch (err) {
       setError(String(err?.message || err))
     } finally {
@@ -102,6 +121,21 @@ export default function SettingsClient() {
       if (!prev) return prev
       return patchFn(prev)
     })
+  }
+
+  function markSecretDirty(fieldKey) {
+    setSecretDirty(prev => ({ ...prev, [fieldKey]: true }))
+  }
+
+  function markProviderApiKeyDirty(providerId) {
+    const id = String(providerId || '')
+    setSecretDirty(prev => ({
+      ...prev,
+      providerApiKeys: {
+        ...prev.providerApiKeys,
+        [id]: true
+      }
+    }))
   }
 
   function updateAliyunSection(sectionKey, patch) {
@@ -188,14 +222,27 @@ export default function SettingsClient() {
         }
       }
     })
+    setSecretDirty(prev => {
+      const nextMap = { ...prev.providerApiKeys }
+      delete nextMap[String(providerId || '')]
+      return { ...prev, providerApiKeys: nextMap }
+    })
   }
 
   function addProvider() {
+    const newProvider = buildDefaultProvider()
     patchConfig(prev => ({
       ...prev,
       llm: {
         ...prev.llm,
-        providers: [...prev.llm.providers, buildDefaultProvider()]
+        providers: [...prev.llm.providers, newProvider]
+      }
+    }))
+    setSecretDirty(prev => ({
+      ...prev,
+      providerApiKeys: {
+        ...prev.providerApiKeys,
+        [String(newProvider.id || '')]: false
       }
     }))
   }
@@ -371,23 +418,17 @@ export default function SettingsClient() {
 
     let aliyunPayload = config.aliyun
     if (serviceKey === 'oss') {
-      const validation = validateCurrentOss(config?.aliyun?.oss || {}, true)
-      if (!validation.valid) {
-        setAliyunTestResultMap(prev => ({
-          ...prev,
-          oss: {
-            type: 'error',
-            text: 'OSS 配置校验失败，请先修正红框字段'
-          }
-        }))
-        return
-      }
       aliyunPayload = {
         ...config.aliyun,
         oss: {
-          ...(config.aliyun?.oss || {}),
-          ...validation.normalized
+          ...(config.aliyun?.oss || {})
         }
+      }
+      if (!secretDirty.ossAccessKeyId) {
+        delete aliyunPayload.oss.accessKeyId
+      }
+      if (!secretDirty.ossAccessKeySecret) {
+        delete aliyunPayload.oss.accessKeySecret
       }
     }
     if (serviceKey === 'asr') {
@@ -416,6 +457,9 @@ export default function SettingsClient() {
           diarizationEnabled,
           requestExtraParams: parsedAsrExtra
         }
+      }
+      if (!secretDirty.asrApiKey) {
+        delete aliyunPayload.asr.apiKey
       }
     }
 
@@ -455,15 +499,11 @@ export default function SettingsClient() {
   }
 
   async function saveConfig() {
-    if (!config) return
+    if (!config || readOnly) return
     setSaveBusy(true)
     setError('')
     setMessage('')
     try {
-      const ossValidation = validateCurrentOss(config?.aliyun?.oss || {}, true)
-      if (!ossValidation.valid) {
-        throw new Error('OSS 配置校验失败，请修正红框字段后再保存')
-      }
       const parsedAsrExtra = JSON.parse(asrExtraText || '{}')
       const diarizationEnabled = config?.aliyun?.asr?.diarizationEnabled !== false
       const nextConfig = {
@@ -471,8 +511,7 @@ export default function SettingsClient() {
         aliyun: {
           ...config.aliyun,
           oss: {
-            ...config.aliyun.oss,
-            ...ossValidation.normalized
+            ...config.aliyun.oss
           },
           asr: {
             ...config.aliyun.asr,
@@ -485,10 +524,32 @@ export default function SettingsClient() {
           }
         }
       }
+      const payloadConfig = JSON.parse(JSON.stringify(nextConfig))
+      if (payloadConfig.access && !secretDirty.sitePassword) {
+        delete payloadConfig.access.sitePassword
+      }
+      if (payloadConfig.aliyun?.asr && !secretDirty.asrApiKey) {
+        delete payloadConfig.aliyun.asr.apiKey
+      }
+      if (payloadConfig.aliyun?.oss && !secretDirty.ossAccessKeyId) {
+        delete payloadConfig.aliyun.oss.accessKeyId
+      }
+      if (payloadConfig.aliyun?.oss && !secretDirty.ossAccessKeySecret) {
+        delete payloadConfig.aliyun.oss.accessKeySecret
+      }
+      if (Array.isArray(payloadConfig?.llm?.providers)) {
+        payloadConfig.llm.providers = payloadConfig.llm.providers.map(provider => {
+          const id = String(provider?.id || '')
+          if (secretDirty.providerApiKeys[id]) return provider
+          const nextProvider = { ...provider }
+          delete nextProvider.apiKey
+          return nextProvider
+        })
+      }
       const res = await fetch('/api/admin/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: nextConfig })
+        body: JSON.stringify({ config: payloadConfig })
       })
       const data = await res.json().catch(() => null)
       if (!res.ok || !data?.success || !data?.config) {
@@ -499,6 +560,7 @@ export default function SettingsClient() {
         throw new Error(data?.error || `保存失败: HTTP ${res.status}`)
       }
       setConfig(data.config)
+      setSecretDirty(buildSecretDirtyState(data.config))
       setMessage('配置已保存')
     } catch (err) {
       setError(String(err?.message || err))
@@ -519,7 +581,7 @@ export default function SettingsClient() {
     <div style={{ display: 'grid', gap: 14 }}>
       <div style={topBarStyle}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button style={primaryBtnStyle} onClick={saveConfig} disabled={saveBusy}>
+          <button style={primaryBtnStyle} onClick={saveConfig} disabled={saveBusy || readOnly}>
             {saveBusy ? '保存中...' : '保存全部配置'}
           </button>
         </div>
@@ -528,7 +590,9 @@ export default function SettingsClient() {
 
       {message && <div style={okStyle}>{message}</div>}
       {error && <div style={errorStyle}>{error}</div>}
+      {readOnly && <div style={readonlyBannerStyle}>当前使用只读密钥登录，设置页仅可查看，无法修改。</div>}
 
+      <div style={readOnly ? readonlyWrapStyle : undefined} aria-disabled={readOnly}>
       <section style={cardStyle}>
         <h3 style={sectionTitleStyle}>网站访问密码</h3>
         <p style={sectionHintStyle}>未登录时会统一跳转到 `/login`。修改后需使用新密码重新登录。</p>
@@ -536,10 +600,42 @@ export default function SettingsClient() {
         <input
           type="text"
           value={config.access.sitePassword || ''}
-          onChange={e => patchConfig(prev => ({ ...prev, access: { ...prev.access, sitePassword: e.target.value } }))}
+          onChange={e => {
+            markSecretDirty('sitePassword')
+            patchConfig(prev => ({ ...prev, access: { ...prev.access, sitePassword: e.target.value } }))
+          }}
           placeholder="输入网站访问密码"
           style={inputStyle}
         />
+        <label style={labelStyle}>readonlySitePassword</label>
+        <input
+          type="text"
+          value={config.access.readonlySitePassword || ''}
+          onChange={e => {
+            patchConfig(prev => ({ ...prev, access: { ...prev.access, readonlySitePassword: e.target.value } }))
+          }}
+          placeholder="只读访问密码"
+          style={inputStyle}
+        />
+      </section>
+
+      <section style={cardStyle}>
+        <h3 style={sectionTitleStyle}>纪要自动化</h3>
+        <p style={sectionHintStyle}>开启后，上传后产出的 MP3 会自动创建纪要任务（异步执行）。</p>
+        <label style={checkLabelStyle}>
+          <input
+            type="checkbox"
+            checked={config?.meeting?.autoGenerateOnMp3Upload === true}
+            onChange={e => patchConfig(prev => ({
+              ...prev,
+              meeting: {
+                ...prev.meeting,
+                autoGenerateOnMp3Upload: e.target.checked
+              }
+            }))}
+          />
+          上传的 MP3 自动生成纪要
+        </label>
       </section>
 
       <section style={cardStyle}>
@@ -601,7 +697,15 @@ export default function SettingsClient() {
                   </div>
                   <div>
                     <label style={labelStyle}>API Key</label>
-                    <input value={provider.apiKey} onChange={e => updateProvider(provider.id, { apiKey: e.target.value })} placeholder="sk-..." style={inputStyle} />
+                    <input
+                      value={provider.apiKey}
+                      onChange={e => {
+                        markProviderApiKeyDirty(provider.id)
+                        updateProvider(provider.id, { apiKey: e.target.value })
+                      }}
+                      placeholder="sk-..."
+                      style={inputStyle}
+                    />
                   </div>
                   <div>
                     <label style={labelStyle}>模型</label>
@@ -787,7 +891,10 @@ export default function SettingsClient() {
                 <label style={labelStyle}>AccessKeyId</label>
                 <input
                   value={config.aliyun.oss.accessKeyId || ''}
-                  onChange={e => updateOssField('accessKeyId', e.target.value)}
+                  onChange={e => {
+                    markSecretDirty('ossAccessKeyId')
+                    updateOssField('accessKeyId', e.target.value)
+                  }}
                   style={getFieldInputStyle('accessKeyId')}
                 />
                 {renderFieldError('accessKeyId')}
@@ -796,7 +903,10 @@ export default function SettingsClient() {
                 <label style={labelStyle}>AccessKeySecret</label>
                 <input
                   value={config.aliyun.oss.accessKeySecret || ''}
-                  onChange={e => updateOssField('accessKeySecret', e.target.value)}
+                  onChange={e => {
+                    markSecretDirty('ossAccessKeySecret')
+                    updateOssField('accessKeySecret', e.target.value)
+                  }}
                   style={getFieldInputStyle('accessKeySecret')}
                 />
                 {renderFieldError('accessKeySecret')}
@@ -864,7 +974,10 @@ export default function SettingsClient() {
                 <label style={labelStyle}>ASR API Key</label>
                 <input
                   value={config.aliyun.asr.apiKey || ''}
-                  onChange={e => updateAliyunSection('asr', { apiKey: e.target.value })}
+                  onChange={e => {
+                    markSecretDirty('asrApiKey')
+                    updateAliyunSection('asr', { apiKey: e.target.value })
+                  }}
                   style={inputStyle}
                 />
               </div>
@@ -969,6 +1082,7 @@ export default function SettingsClient() {
           </div>
         </div>
       </section>
+      </div>
     </div>
   )
 }
@@ -1139,6 +1253,26 @@ const errorStyle = {
   borderRadius: 10,
   color: '#8e2c2c',
   background: 'rgba(255, 241, 241, 0.92)'
+}
+
+const readonlyBannerStyle = {
+  border: '1px solid rgba(176, 117, 31, 0.3)',
+  borderRadius: 12,
+  background: 'rgba(255, 245, 220, 0.9)',
+  color: '#8f5800',
+  fontSize: 13,
+  fontWeight: 700,
+  lineHeight: 1.5,
+  padding: '10px 12px'
+}
+
+const readonlyWrapStyle = {
+  display: 'grid',
+  gap: 14,
+  opacity: 0.62,
+  filter: 'grayscale(0.22)',
+  pointerEvents: 'none',
+  userSelect: 'none'
 }
 
 const inlineOkStyle = {

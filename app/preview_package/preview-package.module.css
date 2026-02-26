@@ -1,0 +1,334 @@
+.pageRoot {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding: 18px 12px 26px;
+  box-sizing: border-box;
+  display: grid;
+  gap: 12px;
+}
+
+.heroCard {
+  border-radius: 20px;
+  border: 1px solid rgba(20, 72, 78, 0.14);
+  background:
+    radial-gradient(circle at 9% 8%, rgba(7, 150, 143, 0.16), transparent 34%),
+    radial-gradient(circle at 88% 0%, rgba(246, 159, 60, 0.17), transparent 40%),
+    rgba(255, 252, 243, 0.93);
+  box-shadow: 0 12px 30px rgba(28, 57, 63, 0.12);
+  padding: 18px;
+}
+
+.heroTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(22, 80, 88, 0.24);
+  background: rgba(255, 255, 255, 0.8);
+  color: #1f5e67;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.heroBadge {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(21, 79, 86, 0.18);
+  border-radius: 999px;
+  padding: 7px 12px;
+  background: rgba(255, 255, 255, 0.66);
+  color: #2d555d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.title {
+  margin: 12px 0 0;
+  font-size: clamp(24px, 4vw, 36px);
+  line-height: 1.08;
+  letter-spacing: -0.015em;
+  color: #1f2f33;
+}
+
+.subtitle {
+  margin: 8px 0 0;
+  color: #436167;
+  font-size: 14px;
+  line-height: 1.62;
+}
+
+.summaryRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(22, 74, 81, 0.16);
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.76);
+  color: #34565c;
+  font-size: 12px;
+}
+
+.pill strong {
+  color: #0f7888;
+}
+
+.searchWrap {
+  width: 100%;
+}
+
+.searchInput {
+  width: min(540px, 100%);
+  min-height: 44px;
+  border-radius: 12px;
+  border: 1px solid rgba(22, 72, 79, 0.2);
+  background: rgba(255, 255, 255, 0.86);
+  color: #23464d;
+  padding: 10px 12px;
+  font-size: 14px;
+  outline: none;
+}
+
+.searchInput:focus {
+  border-color: rgba(14, 123, 135, 0.6);
+  box-shadow: 0 0 0 3px rgba(15, 128, 142, 0.15);
+}
+
+.errorCard {
+  border-radius: 12px;
+  border: 1px solid rgba(179, 52, 52, 0.3);
+  background: rgba(255, 237, 237, 0.86);
+  color: #8f2424;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 10px 12px;
+}
+
+.emptyCard {
+  border-radius: 14px;
+  border: 1px dashed rgba(29, 82, 89, 0.28);
+  background: rgba(255, 255, 255, 0.74);
+  color: #4d6970;
+  text-align: center;
+  padding: 22px 12px;
+  font-size: 14px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  border-radius: 16px;
+  border: 1px solid rgba(25, 74, 82, 0.13);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 10px 24px rgba(27, 56, 61, 0.1);
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.cardHead {
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid rgba(24, 75, 83, 0.1);
+}
+
+.cardTitle {
+  margin: 0;
+  color: #22353a;
+  font-size: 17px;
+  line-height: 1.35;
+}
+
+.cardSub {
+  margin-top: 4px;
+  color: #57757b;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.okBadge,
+.failBadge {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.okBadge {
+  color: #15794f;
+  border: 1px solid rgba(21, 120, 79, 0.3);
+  background: rgba(233, 250, 241, 0.9);
+}
+
+.failBadge {
+  color: #9a2828;
+  border: 1px solid rgba(154, 40, 40, 0.3);
+  background: rgba(255, 237, 237, 0.9);
+}
+
+.cardBody {
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.metaLine {
+  display: grid;
+  grid-template-columns: 66px 1fr;
+  gap: 8px;
+  color: #5d767b;
+  font-size: 12px;
+}
+
+.metaLine span:last-child {
+  color: #2f4d53;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.resolveHint {
+  border-radius: 10px;
+  border: 1px solid rgba(30, 92, 103, 0.18);
+  background: rgba(240, 250, 252, 0.86);
+  color: #2d5d66;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.qrWrap {
+  border-radius: 12px;
+  border: 1px solid rgba(26, 79, 87, 0.14);
+  background: #fff;
+  padding: 8px;
+  width: fit-content;
+}
+
+.qrImage {
+  width: 176px;
+  height: 176px;
+  display: block;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.primaryBtn,
+.copyBtn,
+.copyBtnDone,
+.logBtn {
+  min-height: 40px;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  border: 1px solid rgba(16, 95, 107, 0.3);
+  background: linear-gradient(180deg, #ffffff 0%, #eef8fb 100%);
+  color: #1f5f6a;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.copyBtn {
+  border-color: rgba(168, 102, 18, 0.36);
+  background: linear-gradient(180deg, #fffaf0 0%, #fff0d8 100%);
+  color: #865109;
+}
+
+.copyBtnDone {
+  border-color: rgba(26, 126, 76, 0.36);
+  background: linear-gradient(180deg, #edfaf2 0%, #e0f6ea 100%);
+  color: #1f7a50;
+}
+
+.logBtn {
+  border-color: rgba(35, 80, 138, 0.3);
+  background: linear-gradient(180deg, #f7fbff 0%, #eaf3ff 100%);
+  color: #2a4f8e;
+}
+
+.errorText {
+  border-radius: 10px;
+  border: 1px solid rgba(176, 51, 51, 0.3);
+  background: rgba(255, 238, 238, 0.84);
+  color: #922727;
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 8px 10px;
+}
+
+.suggestText {
+  border-radius: 10px;
+  border: 1px solid rgba(174, 119, 23, 0.24);
+  background: rgba(255, 247, 231, 0.9);
+  color: #895810;
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 8px 10px;
+}
+
+.logPre {
+  margin: 0;
+  max-height: 190px;
+  overflow: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(168, 95, 45, 0.23);
+  background: rgba(255, 245, 235, 0.9);
+  color: #985a22;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 8px 10px;
+}
+
+@media (max-width: 760px) {
+  .pageRoot {
+    padding: 12px 10px 20px;
+  }
+
+  .heroCard {
+    border-radius: 16px;
+    padding: 14px;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .qrImage {
+    width: 150px;
+    height: 150px;
+  }
+}
+

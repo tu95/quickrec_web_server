@@ -61,6 +61,7 @@ export default async function Home() {
           POST /api/convert-mp3 - Opus 转 MP3 (JSON: name)<br />
           POST /api/meeting-notes/jobs - 创建会议纪要任务 (JSON: fileName)<br />
           GET  /api/meeting-notes/jobs/&#123;id&#125; - 查询任务状态<br />
+          POST /api/meeting-notes/jobs/&#123;id&#125;/cancel - 取消纪要任务<br />
           GET  /api/meeting-notes/&#123;id&#125; - 获取纪要 Markdown<br />
           GET  /api/meeting-notes/&#123;id&#125;/asr - 获取 ASR 原文存档<br />
           GET  /api/files - 获取文件列表(含分类字段)<br />
