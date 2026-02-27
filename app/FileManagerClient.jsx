@@ -24,6 +24,16 @@ function isMeetingJobRunning(job) {
   return status === 'queued' || status === 'running'
 }
 
+function getMeetingJobStatus(job) {
+  if (!job || typeof job !== 'object') return ''
+  return String(job.status || '').toLowerCase()
+}
+
+function isMeetingJobTerminal(job) {
+  const status = getMeetingJobStatus(job)
+  return status === 'completed' || status === 'failed' || status === 'cancelled'
+}
+
 function normalizeNoteViewUrl(rawUrl) {
   const value = String(rawUrl || '').trim()
   if (!value) return ''
@@ -48,6 +58,12 @@ export default function FileManagerClient({ origin, initialFiles }) {
   const [message, setMessage] = useState('')
   const [player, setPlayer] = useState({ url: '', label: '', token: 0 })
   const audioRef = useRef(null)
+  const pollTimerRef = useRef(null)
+  const pollInFlightRef = useRef(false)
+  const pollingJobsRef = useRef(new Map())
+  const autoOpenJobIdsRef = useRef(new Set())
+  const lastPollingErrorRef = useRef('')
+  const meetingPollIntervalMs = 2500
 
   const grouped = useMemo(() => {
     const recording = []
@@ -92,8 +108,162 @@ export default function FileManagerClient({ origin, initialFiles }) {
     setNoteCancelBusyMap(prev => ({ ...prev, [name]: value }))
   }
 
-  function setNoteJob(name, value) {
-    setNoteJobMap(prev => ({ ...prev, [name]: value }))
+  function stopMeetingPolling() {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
+  }
+
+  function removePollingJob(fileName, expectedJobId = '') {
+    const key = String(fileName || '')
+    if (!key) return
+    if (!pollingJobsRef.current.has(key)) return
+    const currentJobId = String(pollingJobsRef.current.get(key) || '')
+    if (expectedJobId && currentJobId && currentJobId !== String(expectedJobId)) return
+    pollingJobsRef.current.delete(key)
+    if (pollingJobsRef.current.size === 0) {
+      stopMeetingPolling()
+    }
+  }
+
+  function trackMeetingJob(fileName, job, options = null) {
+    const key = String(fileName || '')
+    if (!key || !job || typeof job !== 'object') return
+    const jobId = String(job.id || '')
+    setNoteJobMap(prev => ({ ...prev, [key]: job }))
+
+    if (isMeetingJobRunning(job) && jobId) {
+      pollingJobsRef.current.set(key, jobId)
+      if (options?.autoOpenOnComplete === true) {
+        autoOpenJobIdsRef.current.add(jobId)
+      }
+      startMeetingPolling()
+      return
+    }
+
+    if (jobId) {
+      autoOpenJobIdsRef.current.delete(jobId)
+    }
+    removePollingJob(key, jobId)
+  }
+
+  async function pollMeetingJobsOnce() {
+    if (pollInFlightRef.current) return
+    if (typeof document !== 'undefined' && document.hidden) return
+    const entries = Array.from(pollingJobsRef.current.entries())
+    if (entries.length === 0) {
+      stopMeetingPolling()
+      return
+    }
+
+    pollInFlightRef.current = true
+    try {
+      for (const [fileName, jobId] of entries) {
+        const safeJobId = String(jobId || '')
+        if (!safeJobId) {
+          removePollingJob(fileName)
+          continue
+        }
+
+        let statusRes = null
+        let statusData = null
+        try {
+          statusRes = await fetch(`/api/meeting-notes/jobs/${encodeURIComponent(safeJobId)}`, { cache: 'no-store' })
+          statusData = await statusRes.json().catch(() => null)
+        } catch (error) {
+          const errText = String(error?.message || error)
+          if (lastPollingErrorRef.current !== errText) {
+            lastPollingErrorRef.current = errText
+            setMessage(`纪要状态查询失败: ${errText}`)
+          }
+          continue
+        }
+
+        if (!statusRes || !statusRes.ok || !statusData || !statusData.success || !statusData.job) {
+          const errorText = String(
+            statusData?.error ||
+            (statusRes ? `HTTP ${statusRes.status}` : 'network error')
+          )
+          if (statusRes && statusRes.status === 404) {
+            removePollingJob(fileName, safeJobId)
+            setNoteJobMap(prev => ({
+              ...prev,
+              [fileName]: {
+                id: safeJobId,
+                status: 'failed',
+                stage: 'error',
+                error: 'job not found',
+                result: null
+              }
+            }))
+          }
+          if (lastPollingErrorRef.current !== errorText) {
+            lastPollingErrorRef.current = errorText
+            setMessage(`纪要状态查询失败: ${errorText}`)
+          }
+          continue
+        }
+
+        const job = statusData.job
+        lastPollingErrorRef.current = ''
+        setNoteJobMap(prev => ({ ...prev, [fileName]: job }))
+
+        if (isMeetingJobRunning(job)) {
+          continue
+        }
+
+        removePollingJob(fileName, safeJobId)
+        const finishedJobId = String(job.id || safeJobId)
+        const shouldAutoOpen = autoOpenJobIdsRef.current.has(finishedJobId)
+        autoOpenJobIdsRef.current.delete(finishedJobId)
+
+        if (getMeetingJobStatus(job) === 'completed') {
+          if (shouldAutoOpen) {
+            setMessage('会议纪要已生成')
+            const noteUrl = normalizeNoteViewUrl(String(job?.result?.noteUrl || ''))
+            if (noteUrl) {
+              if (/^https?:\/\//i.test(noteUrl)) {
+                if (typeof window !== 'undefined' && typeof window.location !== 'undefined') {
+                  window.location.assign(noteUrl)
+                }
+              } else {
+                router.push(noteUrl)
+              }
+            }
+          }
+          continue
+        }
+
+        if (getMeetingJobStatus(job) === 'cancelled') {
+          setMessage('纪要任务已取消')
+          continue
+        }
+
+        if (getMeetingJobStatus(job) === 'failed') {
+          const err = String(job.error || '纪要生成失败')
+          setMessage(`纪要生成失败: ${err}`)
+          setNoteErrorLog(err)
+        }
+      }
+    } finally {
+      pollInFlightRef.current = false
+      if (pollingJobsRef.current.size === 0) {
+        stopMeetingPolling()
+      }
+    }
+  }
+
+  function startMeetingPolling() {
+    if (typeof window === 'undefined') return
+    if (typeof document !== 'undefined' && document.hidden) return
+    if (pollingJobsRef.current.size === 0) return
+    if (pollTimerRef.current) return
+
+    pollTimerRef.current = window.setInterval(() => {
+      void pollMeetingJobsOnce()
+    }, meetingPollIntervalMs)
+    void pollMeetingJobsOnce()
   }
 
   async function deleteFile(fileName) {
@@ -114,6 +284,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
       }
       const deletedText = Array.isArray(data.deleted) ? data.deleted.join(', ') : fileName
       setMessage(`已删除: ${deletedText}`)
+      removePollingJob(fileName)
       await refreshFiles()
     } catch (error) {
       setMessage(`删除失败: ${String(error.message || error)}`)
@@ -139,33 +310,12 @@ export default function FileManagerClient({ origin, initialFiles }) {
       if (!createRes.ok || !createData || !createData.success || !createData.job) {
         throw new Error((createData && createData.error) ? createData.error : `HTTP ${createRes.status}`)
       }
-      const jobId = createData.job.id
-      setNoteJob(fileName, createData.job)
-
-      for (let i = 0; i < 120; i += 1) {
-        if (!jobId) break
-        await new Promise(resolve => setTimeout(resolve, 2500))
-        const statusRes = await fetch(`/api/meeting-notes/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' })
-        const statusData = await statusRes.json().catch(() => null)
-        if (!statusRes.ok || !statusData || !statusData.success || !statusData.job) {
-          throw new Error((statusData && statusData.error) ? statusData.error : `HTTP ${statusRes.status}`)
-        }
-        const job = statusData.job
-        setNoteJob(fileName, job)
-        if (job.status === 'completed') {
-          setMessage('会议纪要已生成')
-          openMeetingNote(job)
-          return
-        }
-        if (job.status === 'cancelled') {
-          setMessage('纪要任务已取消')
-          return
-        }
-        if (job.status === 'failed') {
-          throw new Error(job.error || '纪要生成失败')
-        }
+      trackMeetingJob(fileName, createData.job, { autoOpenOnComplete: true })
+      if (isMeetingJobRunning(createData.job)) {
+        setMessage('纪要任务已创建，正在后台生成')
+      } else if (getMeetingJobStatus(createData.job) === 'completed') {
+        setMessage('会议纪要已生成')
       }
-      throw new Error('纪要生成超时，请稍后重试')
     } catch (error) {
       const text = String(error && error.message ? error.message : error)
       setMessage(`纪要生成失败: ${text}`)
@@ -188,7 +338,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
       if (!res.ok || !data?.success || !data?.job) {
         throw new Error((data && data.error) ? data.error : `HTTP ${res.status}`)
       }
-      setNoteJob(fileName, data.job)
+      trackMeetingJob(fileName, data.job)
       setNoteBusy(fileName, false)
       setMessage('已取消纪要生成，可重新发起')
       await refreshFiles()
@@ -197,11 +347,6 @@ export default function FileManagerClient({ origin, initialFiles }) {
     } finally {
       setNoteCancelBusy(fileName, false)
     }
-  }
-
-  function openMeetingNote(job) {
-    const noteUrl = job && job.result && job.result.noteUrl ? String(job.result.noteUrl) : ''
-    openMeetingNoteByUrl(noteUrl)
   }
 
   function openMeetingNoteByUrl(noteUrl) {
@@ -256,6 +401,58 @@ export default function FileManagerClient({ origin, initialFiles }) {
     if (!url) return
     setPlayer({ url, label, token: Date.now() })
   }
+
+  useEffect(() => {
+    const fileNames = new Set()
+    for (const file of files) {
+      if (!file || !file.name) continue
+      fileNames.add(file.name)
+      const persistedNoteJob = file.latestMeetingJob && typeof file.latestMeetingJob === 'object'
+        ? file.latestMeetingJob
+        : null
+      if (!persistedNoteJob || !persistedNoteJob.id) continue
+      if (isMeetingJobRunning(persistedNoteJob)) {
+        pollingJobsRef.current.set(file.name, String(persistedNoteJob.id))
+      } else if (isMeetingJobTerminal(persistedNoteJob)) {
+        removePollingJob(file.name, String(persistedNoteJob.id))
+      }
+    }
+
+    for (const [fileName] of Array.from(pollingJobsRef.current.entries())) {
+      if (!fileNames.has(fileName)) {
+        removePollingJob(fileName)
+      }
+    }
+
+    if (pollingJobsRef.current.size > 0) {
+      startMeetingPolling()
+    } else {
+      stopMeetingPolling()
+    }
+  }, [files])
+
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (typeof document !== 'undefined' && document.hidden) {
+        stopMeetingPolling()
+        return
+      }
+      if (pollingJobsRef.current.size > 0) {
+        startMeetingPolling()
+        void pollMeetingJobsOnce()
+      }
+    }
+
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', onVisibilityChange)
+    }
+    return () => {
+      if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+        document.removeEventListener('visibilitychange', onVisibilityChange)
+      }
+      stopMeetingPolling()
+    }
+  }, [])
 
   useEffect(() => {
     if (!player.url) return
