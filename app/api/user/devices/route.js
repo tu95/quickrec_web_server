@@ -1,6 +1,7 @@
 import { listUserDevices } from '../../_lib/recorder-multiuser-store'
 import { requireUserAuth } from '../../_lib/user-auth'
 import { getSupabaseConfigError } from '../../_lib/supabase-client'
+import { resolveDeviceModel } from '../../_lib/device-model-map'
 
 export async function GET(request) {
   const configError = getSupabaseConfigError()
@@ -26,6 +27,10 @@ export async function GET(request) {
       deviceId: String(item?.device?.device_identity || ''),
       identitySource: String(item?.device?.identity_source || ''),
       deviceSource: String(item?.device?.device_source || ''),
+      deviceModel: resolveDeviceModel({
+        deviceSource: item?.device?.device_source,
+        deviceId: item?.device?.device_identity
+      }),
       status: String(item?.status || ''),
       boundAt: String(item?.bound_at || '')
     }))

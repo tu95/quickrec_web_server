@@ -27,6 +27,7 @@ function statusText(status) {
 export default function PairPage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [deletingDeviceId, setDeletingDeviceId] = useState('')
   const [pairCode, setPairCode] = useState('')
   const [user, setUser] = useState(null)
   const [devices, setDevices] = useState([])
@@ -114,6 +115,38 @@ export default function PairPage() {
     }
   }
 
+  async function unbindDevice(device) {
+    const id = String(device?.id || '').trim()
+    if (!id) {
+      setError('设备参数异常，缺少 ID')
+      return
+    }
+    const label = String(device?.deviceId || id)
+    const confirmed = window.confirm(`确认删除设备 ${label} 的绑定关系吗？`)
+    if (!confirmed) return
+    setDeletingDeviceId(id)
+    setError('')
+    setMessage('')
+    try {
+      const res = await fetch('/api/user/devices/unbind', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: id })
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || `删除失败: HTTP ${res.status}`)
+      }
+      const finalDeviceId = String(data?.device?.deviceId || label)
+      setMessage(data?.alreadyUnbound ? `设备 ${finalDeviceId} 已是未绑定状态。` : `设备 ${finalDeviceId} 已删除绑定。`)
+      await loadDevices()
+    } catch (err) {
+      setError(String(err?.message || err))
+    } finally {
+      setDeletingDeviceId('')
+    }
+  }
+
   return (
     <main className="page-root pair-shell">
       <section className="hero">
@@ -189,9 +222,18 @@ export default function PairPage() {
             {sortedDevices.map(item => (
               <div key={`${item.id}_${item.boundAt}`} className="device-card">
                 <div><strong>设备标识：</strong>{item.deviceId || '-'}</div>
-                <div><strong>来源：</strong>{item.identitySource || '-'}</div>
+                <div><strong>设备型号：</strong>{item.deviceModel || '未知型号'}</div>
                 <div><strong>状态：</strong>{statusText(item.status)}</div>
                 <div><strong>绑定时间：</strong>{formatDateTime(item.boundAt)}</div>
+                <div className="action-row" style={{ marginTop: 8 }}>
+                  <button
+                    className="ui-btn ui-btn-danger"
+                    onClick={() => unbindDevice(item)}
+                    disabled={busy || loading || deletingDeviceId === String(item.id || '')}
+                  >
+                    {deletingDeviceId === String(item.id || '') ? '删除中...' : '删除设备'}
+                  </button>
+                </div>
               </div>
             ))}
           </div>

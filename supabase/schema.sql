@@ -73,6 +73,23 @@ create table if not exists public.recorder_user_configs (
 
 create index if not exists idx_recorder_pair_codes_device on public.recorder_pair_codes(device_id);
 create index if not exists idx_recorder_pair_codes_status on public.recorder_pair_codes(status, expires_at);
+with pending_ranked as (
+  select
+    id,
+    row_number() over (partition by device_id order by created_at desc, id desc) as rn
+  from public.recorder_pair_codes
+  where status = 'pending'
+)
+update public.recorder_pair_codes as t
+set status = 'replaced', updated_at = now()
+where t.id in (
+  select id
+  from pending_ranked
+  where rn > 1
+);
+create unique index if not exists uq_recorder_pair_codes_pending_device
+  on public.recorder_pair_codes(device_id)
+  where status = 'pending';
 create index if not exists idx_recorder_user_devices_user on public.recorder_user_devices(user_id);
 create unique index if not exists uq_recorder_user_devices_active_device
   on public.recorder_user_devices(device_id)

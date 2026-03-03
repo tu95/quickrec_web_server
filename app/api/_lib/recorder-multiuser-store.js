@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto'
 import { createSupabaseServiceClient } from './supabase-client'
 import { generateSessionToken } from './user-auth'
 import { getSecurityConfig } from './security-config'
@@ -30,9 +31,10 @@ function normalizePairCode(raw) {
 }
 
 function buildPairCode(length) {
-  const size = Number(length) || 6
+  const parsed = Number(length)
+  const size = Number.isFinite(parsed) ? Math.max(1, Math.min(12, Math.floor(parsed))) : 6
   const max = Math.pow(10, size)
-  const n = Math.floor(Math.random() * max)
+  const n = randomInt(0, max)
   return String(n).padStart(size, '0')
 }
 
@@ -51,6 +53,37 @@ function isExpired(isoText) {
 function firstRow(data) {
   if (Array.isArray(data) && data.length > 0) return data[0]
   return null
+}
+
+function getDbErrorText(error) {
+  if (!error || typeof error !== 'object') return ''
+  return [
+    String(error.code || ''),
+    String(error.message || ''),
+    String(error.details || ''),
+    String(error.hint || '')
+  ].join(' ').toLowerCase()
+}
+
+function isUniqueViolationError(error) {
+  const code = String(error?.code || '').trim()
+  if (code === '23505') return true
+  const text = getDbErrorText(error)
+  return text.includes('duplicate') || text.includes('unique')
+}
+
+async function getLatestPendingPairCode(client, deviceId, nowIsoText) {
+  const now = String(nowIsoText || nowIso())
+  const { data, error } = await client
+    .from(TABLE.pairCodes)
+    .select('*')
+    .eq('device_id', deviceId)
+    .eq('status', 'pending')
+    .gt('expires_at', now)
+    .order('created_at', { ascending: false })
+    .limit(1)
+  if (error) throw new Error(String(error.message || '读取配对码失败'))
+  return firstRow(data)
 }
 
 async function getDeviceByIdentity(identity) {
@@ -124,16 +157,7 @@ export async function createPairCodeForDevice(deviceIdentity, identitySource, de
   }
 
   if (!forceRebind) {
-    const { data: pendingRows, error: pendingError } = await client
-      .from(TABLE.pairCodes)
-      .select('*')
-      .eq('device_id', device.id)
-      .eq('status', 'pending')
-      .gt('expires_at', now)
-      .order('created_at', { ascending: false })
-      .limit(1)
-    if (pendingError) throw new Error(String(pendingError.message || '读取配对码失败'))
-    const pending = firstRow(pendingRows)
+    const pending = await getLatestPendingPairCode(client, device.id, now)
     if (pending) {
       return {
         device,
@@ -143,20 +167,21 @@ export async function createPairCodeForDevice(deviceIdentity, identitySource, de
         expiresAt: String(pending.expires_at || '')
       }
     }
-  }
-
-  let created = null
-  for (let i = 0; i < 8; i += 1) {
-    // 同一设备仅保留 1 个有效待配对码
+  } else {
+    // 强制重绑时，作废当前设备未过期的 pending 码，保证后续下发的是新链路。
     await client
       .from(TABLE.pairCodes)
       .update({ status: 'replaced', updated_at: now })
       .eq('device_id', device.id)
       .eq('status', 'pending')
       .gt('expires_at', now)
+  }
 
+  let created = null
+  for (let i = 0; i < 8; i += 1) {
     const pairCode = buildPairCode(security.pair.codeLength)
-    const expiresAt = addSeconds(now, security.pair.codeTtlSec)
+    const insertNow = nowIso()
+    const expiresAt = addSeconds(insertNow, security.pair.codeTtlSec)
     const { data, error } = await client
       .from(TABLE.pairCodes)
       .insert({
@@ -164,8 +189,8 @@ export async function createPairCodeForDevice(deviceIdentity, identitySource, de
         pair_code: pairCode,
         status: 'pending',
         expires_at: expiresAt,
-        created_at: now,
-        updated_at: now
+        created_at: insertNow,
+        updated_at: insertNow
       })
       .select('*')
       .limit(1)
@@ -173,13 +198,34 @@ export async function createPairCodeForDevice(deviceIdentity, identitySource, de
       created = firstRow(data)
       break
     }
-    const msg = String(error.message || '')
-    if (msg.toLowerCase().includes('duplicate') || msg.toLowerCase().includes('unique')) {
+    if (isUniqueViolationError(error)) {
+      // 并发下可能是：pair_code 冲突，或同设备 pending 约束命中；优先复用最新 pending。
+      const pending = await getLatestPendingPairCode(client, device.id, nowIso())
+      if (pending) {
+        return {
+          device,
+          alreadyPaired: false,
+          status: 'pending_reused',
+          pairCode: String(pending.pair_code || ''),
+          expiresAt: String(pending.expires_at || '')
+        }
+      }
       continue
     }
-    throw new Error(msg || '创建配对码失败')
+    throw new Error(String(error.message || '创建配对码失败'))
   }
   if (!created) {
+    // 最后一次兜底：若并发已成功写入 pending，直接复用。
+    const pending = await getLatestPendingPairCode(client, device.id, nowIso())
+    if (pending) {
+      return {
+        device,
+        alreadyPaired: false,
+        status: 'pending_reused',
+        pairCode: String(pending.pair_code || ''),
+        expiresAt: String(pending.expires_at || '')
+      }
+    }
     throw new Error('创建配对码失败：重试次数超限')
   }
   return {
@@ -528,7 +574,68 @@ export async function listUserDevices(userId) {
       )
     `)
     .eq('user_id', uid)
+    .eq('status', 'active')
     .order('bound_at', { ascending: false })
   if (error) throw new Error(String(error.message || '读取设备列表失败'))
   return Array.isArray(data) ? data : []
+}
+
+export async function unbindUserDevice(userId, deviceId) {
+  const uid = String(userId || '').trim()
+  const did = String(deviceId || '').trim()
+  if (!uid) throw new Error('用户信息为空')
+  if (!did) throw new Error('设备信息为空')
+
+  const client = createSupabaseServiceClient()
+  const now = nowIso()
+  const { data: rows, error: lookupError } = await client
+    .from(TABLE.userDevices)
+    .select(`
+      id,
+      status,
+      device_id,
+      device:recorder_devices (
+        id,
+        device_identity,
+        identity_source,
+        device_source
+      )
+    `)
+    .eq('user_id', uid)
+    .eq('device_id', did)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+  if (lookupError) throw new Error(String(lookupError.message || '读取绑定关系失败'))
+  const row = firstRow(rows)
+  if (!row) throw new Error('设备未绑定到当前账号')
+
+  const relationStatus = String(row.status || '').trim().toLowerCase()
+  if (relationStatus === 'active') {
+    const { error: unbindError } = await client
+      .from(TABLE.userDevices)
+      .update({
+        status: 'inactive',
+        updated_at: now
+      })
+      .eq('user_id', uid)
+      .eq('device_id', did)
+      .eq('status', 'active')
+    if (unbindError) throw new Error(String(unbindError.message || '解除设备绑定失败'))
+
+    const { error: revokeError } = await client
+      .from(TABLE.deviceSessions)
+      .update({
+        status: 'revoked',
+        updated_at: now
+      })
+      .eq('user_id', uid)
+      .eq('device_id', did)
+      .eq('status', 'active')
+    if (revokeError) throw new Error(String(revokeError.message || '吊销设备会话失败'))
+  }
+
+  return {
+    alreadyUnbound: relationStatus !== 'active',
+    device: row.device || null
+  }
 }

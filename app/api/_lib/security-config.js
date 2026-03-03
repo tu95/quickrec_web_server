@@ -29,9 +29,10 @@ export function getSecurityConfig() {
   return {
     pair: {
       codeLength: readIntEnv('PAIR_CODE_LENGTH', 6, 6, 12),
-      codeTtlSec: readIntEnv('PAIR_CODE_TTL_SEC', 300, 60, 3600),
+      codeTtlSec: readIntEnv('PAIR_CODE_TTL_SEC', 600, 60, 3600),
       statusSessionIssueWindowSec: readIntEnv('PAIR_STATUS_SESSION_ISSUE_WINDOW_SEC', 180, 30, 1800),
-      deviceSessionTtlSec: readIntEnv('DEVICE_SESSION_TTL_SEC', 30 * 24 * 60 * 60, 600, 365 * 24 * 60 * 60)
+      // 开发阶段默认拉长设备会话，避免已绑定设备频繁重新配对。
+      deviceSessionTtlSec: readIntEnv('DEVICE_SESSION_TTL_SEC', 10 * 365 * 24 * 60 * 60, 600, 50 * 365 * 24 * 60 * 60)
     },
     rateLimit: {
       pairCode: {
