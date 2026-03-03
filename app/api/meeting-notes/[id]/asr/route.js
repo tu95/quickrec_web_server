@@ -19,7 +19,7 @@ export async function GET(request, { params }) {
   }
 
   try {
-    const asrArchive = await getMeetingNoteAsr(id)
+    const asrArchive = await getMeetingNoteAsr(id, String(auth.user?.id || ''))
     if (!asrArchive) {
       return Response.json(
         { success: false, error: 'asr archive not found' },

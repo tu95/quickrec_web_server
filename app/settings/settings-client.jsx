@@ -100,6 +100,9 @@ export default function SettingsClient() {
           window.location.href = '/login?next=/settings'
           return
         }
+        if (res.status === 503) {
+          throw new Error(data?.error || '认证服务连接失败，请稍后重试')
+        }
         throw new Error(data?.error || `加载配置失败: HTTP ${res.status}`)
       }
       setConfig(data.config)
@@ -1090,7 +1093,7 @@ export default function SettingsClient() {
 const loadingStyle = {
   textAlign: 'center',
   padding: 40,
-  color: '#4b666b'
+  color: 'rgba(255,255,255,0.72)'
 }
 
 const topBarStyle = {
@@ -1101,29 +1104,29 @@ const topBarStyle = {
   gap: 10,
   padding: 12,
   borderRadius: 14,
-  border: '1px solid rgba(22, 76, 93, 0.16)',
-  background: 'rgba(255,255,255,0.68)'
+  border: '1px solid rgba(255,255,255,0.12)',
+  background: 'rgba(255,255,255,0.04)'
 }
 
 const linkStyle = {
-  color: '#18626f',
+  color: '#c5adff',
   fontWeight: 700,
   textDecoration: 'none'
 }
 
 const cardStyle = {
-  border: '1px solid rgba(24, 72, 83, 0.15)',
+  border: '1px solid rgba(255,255,255,0.12)',
   borderRadius: 16,
-  background: 'linear-gradient(145deg, rgba(255,255,255,0.96), rgba(249, 255, 251, 0.83))',
+  background: 'linear-gradient(145deg, rgba(23,20,34,0.95), rgba(17,15,28,0.96))',
   padding: 14,
-  boxShadow: '0 8px 22px rgba(34, 64, 67, 0.09)'
+  boxShadow: '0 10px 24px rgba(0, 0, 0, 0.28)'
 }
 
 const subCardStyle = {
-  border: '1px solid rgba(36, 79, 91, 0.14)',
+  border: '1px solid rgba(255,255,255,0.1)',
   borderRadius: 12,
   padding: 12,
-  background: 'rgba(255,255,255,0.88)'
+  background: 'rgba(255,255,255,0.04)'
 }
 
 const sectionHeaderStyle = {
@@ -1146,13 +1149,13 @@ const providerHeadStyle = {
 const sectionTitleStyle = {
   margin: 0,
   fontSize: 16,
-  color: '#1e4953',
+  color: '#f0f2ff',
   fontWeight: 800
 }
 
 const sectionHintStyle = {
   margin: '5px 0 10px',
-  color: '#4f686e',
+  color: 'rgba(255,255,255,0.66)',
   fontSize: 13
 }
 
@@ -1166,7 +1169,7 @@ const labelStyle = {
   display: 'block',
   marginBottom: 6,
   fontSize: 12,
-  color: '#32515a',
+  color: 'rgba(255,255,255,0.8)',
   fontWeight: 700
 }
 
@@ -1175,30 +1178,30 @@ const checkLabelStyle = {
   gap: 8,
   alignItems: 'center',
   fontSize: 13,
-  color: '#2f5f65',
+  color: 'rgba(255,255,255,0.8)',
   fontWeight: 700
 }
 
 const inputStyle = {
   width: '100%',
-  border: '1px solid rgba(33, 86, 97, 0.25)',
+  border: '1px solid rgba(255,255,255,0.16)',
   borderRadius: 10,
   padding: '10px 12px',
   minHeight: 44,
   fontSize: 13,
-  color: '#1f4249',
-  background: 'rgba(255,255,255,0.95)'
+  color: '#f1f3ff',
+  background: 'rgba(255,255,255,0.05)'
 }
 
 const inputErrorStyle = {
-  border: '1px solid rgba(185, 77, 77, 0.72)',
-  background: 'rgba(255, 244, 244, 0.96)'
+  border: '1px solid rgba(255, 77, 79, 0.72)',
+  background: 'rgba(255, 77, 79, 0.14)'
 }
 
 const fieldErrorStyle = {
   marginTop: 6,
   fontSize: 12,
-  color: '#8e2c2c',
+  color: '#ffb8ba',
   fontWeight: 700
 }
 
@@ -1209,57 +1212,57 @@ const textareaStyle = {
 }
 
 const primaryBtnStyle = {
-  border: '1px solid rgba(10, 126, 118, 0.45)',
+  border: '1px solid rgba(170, 138, 255, 0.58)',
   borderRadius: 999,
   minHeight: 44,
   padding: '10px 16px',
   fontSize: 13,
   fontWeight: 700,
-  color: '#114e55',
-  background: 'linear-gradient(135deg, rgba(6,170,158,0.28), rgba(247,182,90,0.22))',
+  color: '#ffffff',
+  background: 'linear-gradient(135deg, #6300ff, #7a3dff)',
   cursor: 'pointer'
 }
 
 const ghostBtnStyle = {
-  border: '1px solid rgba(33, 77, 86, 0.3)',
+  border: '1px solid rgba(255,255,255,0.16)',
   borderRadius: 999,
   minHeight: 40,
   padding: '8px 14px',
   fontSize: 13,
   fontWeight: 700,
-  color: '#21545f',
-  background: 'rgba(255,255,255,0.85)',
+  color: 'rgba(255,255,255,0.88)',
+  background: 'rgba(255,255,255,0.06)',
   cursor: 'pointer'
 }
 
 const dangerBtnStyle = {
   ...ghostBtnStyle,
-  border: '1px solid rgba(177, 60, 60, 0.35)',
-  color: '#9d3535',
-  background: 'rgba(255, 243, 243, 0.95)'
+  border: '1px solid rgba(255, 77, 79, 0.4)',
+  color: '#ffd3d4',
+  background: 'rgba(255, 77, 79, 0.18)'
 }
 
 const okStyle = {
   padding: '10px 12px',
-  border: '1px solid rgba(26, 138, 109, 0.42)',
+  border: '1px solid rgba(25, 195, 125, 0.48)',
   borderRadius: 10,
-  color: '#1c684f',
-  background: 'rgba(235, 255, 245, 0.88)'
+  color: '#98ffd0',
+  background: 'rgba(25, 195, 125, 0.14)'
 }
 
 const errorStyle = {
   padding: '10px 12px',
-  border: '1px solid rgba(185, 77, 77, 0.38)',
+  border: '1px solid rgba(255, 77, 79, 0.48)',
   borderRadius: 10,
-  color: '#8e2c2c',
-  background: 'rgba(255, 241, 241, 0.92)'
+  color: '#ffc6c8',
+  background: 'rgba(255, 77, 79, 0.14)'
 }
 
 const readonlyBannerStyle = {
-  border: '1px solid rgba(176, 117, 31, 0.3)',
+  border: '1px solid rgba(245, 165, 36, 0.42)',
   borderRadius: 12,
-  background: 'rgba(255, 245, 220, 0.9)',
-  color: '#8f5800',
+  background: 'rgba(245, 165, 36, 0.16)',
+  color: '#ffd79c',
   fontSize: 13,
   fontWeight: 700,
   lineHeight: 1.5,
@@ -1278,42 +1281,42 @@ const readonlyWrapStyle = {
 const inlineOkStyle = {
   marginTop: 8,
   padding: '8px 10px',
-  border: '1px solid rgba(26, 138, 109, 0.42)',
+  border: '1px solid rgba(25, 195, 125, 0.48)',
   borderRadius: 10,
-  color: '#1c684f',
-  background: 'rgba(235, 255, 245, 0.88)',
+  color: '#98ffd0',
+  background: 'rgba(25, 195, 125, 0.14)',
   fontSize: 12
 }
 
 const inlineInfoStyle = {
   marginTop: 8,
   padding: '8px 10px',
-  border: '1px solid rgba(55, 99, 170, 0.35)',
+  border: '1px solid rgba(130, 154, 255, 0.45)',
   borderRadius: 10,
-  color: '#2b517e',
-  background: 'rgba(239, 247, 255, 0.9)',
+  color: '#d6ddff',
+  background: 'rgba(130, 154, 255, 0.14)',
   fontSize: 12
 }
 
 const inlineErrorStyle = {
   marginTop: 8,
   padding: '8px 10px',
-  border: '1px solid rgba(185, 77, 77, 0.38)',
+  border: '1px solid rgba(255, 77, 79, 0.48)',
   borderRadius: 10,
-  color: '#8e2c2c',
-  background: 'rgba(255, 241, 241, 0.92)',
+  color: '#ffc6c8',
+  background: 'rgba(255, 77, 79, 0.14)',
   fontSize: 12
 }
 
 const copyBtnStyle = {
-  border: '1px solid rgba(15, 118, 88, 0.3)',
+  border: '1px solid rgba(255,255,255,0.16)',
   borderRadius: 999,
   minHeight: 40,
   padding: '8px 14px',
   fontSize: 13,
   fontWeight: 700,
-  color: '#0f5f52',
-  background: 'linear-gradient(135deg, rgba(224,255,247,0.95), rgba(239,255,245,0.95))',
+  color: '#e6dcff',
+  background: 'linear-gradient(135deg, rgba(99,0,255,0.42), rgba(122,61,255,0.34))',
   cursor: 'pointer',
   flex: '0 0 auto',
   transition: 'transform 120ms ease, box-shadow 120ms ease, background 120ms ease'
@@ -1321,12 +1324,12 @@ const copyBtnStyle = {
 
 const copyBtnPressedStyle = {
   transform: 'translateY(1px) scale(0.98)',
-  boxShadow: 'inset 0 1px 2px rgba(7, 53, 45, 0.18)',
-  background: 'linear-gradient(135deg, rgba(194,247,233,0.95), rgba(223,251,238,0.95))'
+  boxShadow: 'inset 0 1px 2px rgba(22, 16, 41, 0.48)',
+  background: 'linear-gradient(135deg, rgba(82,0,212,0.5), rgba(110,49,238,0.4))'
 }
 
 const copyBtnDoneStyle = {
-  border: '1px solid rgba(23, 148, 93, 0.42)',
-  color: '#0d6a4c',
-  background: 'linear-gradient(135deg, rgba(209,255,235,0.95), rgba(226,255,240,0.95))'
+  border: '1px solid rgba(25, 195, 125, 0.48)',
+  color: '#98ffd0',
+  background: 'linear-gradient(135deg, rgba(25,195,125,0.25), rgba(29,160,111,0.21))'
 }

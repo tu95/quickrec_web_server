@@ -1,6 +1,8 @@
 /node_modules
 /.next
 /logs/
+/.env.local
+/.env.*.local
 /uploads/*.opus
 /uploads/*.mp3
 /uploads/*.wav

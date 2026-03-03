@@ -9,12 +9,12 @@
 
 .heroCard {
   border-radius: 20px;
-  border: 1px solid rgba(20, 72, 78, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   background:
-    radial-gradient(circle at 9% 8%, rgba(7, 150, 143, 0.16), transparent 34%),
-    radial-gradient(circle at 88% 0%, rgba(246, 159, 60, 0.17), transparent 40%),
-    rgba(255, 252, 243, 0.93);
-  box-shadow: 0 12px 30px rgba(28, 57, 63, 0.12);
+    radial-gradient(circle at 9% 8%, rgba(122, 61, 255, 0.22), transparent 34%),
+    radial-gradient(circle at 88% 0%, rgba(10, 190, 232, 0.14), transparent 40%),
+    rgba(13, 12, 20, 0.9);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
   padding: 18px;
 }
 
@@ -32,9 +32,9 @@
   min-height: 42px;
   padding: 8px 14px;
   border-radius: 999px;
-  border: 1px solid rgba(22, 80, 88, 0.24);
-  background: rgba(255, 255, 255, 0.8);
-  color: #1f5e67;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.9);
   text-decoration: none;
   font-weight: 700;
   font-size: 13px;
@@ -44,11 +44,11 @@
   min-height: 34px;
   display: inline-flex;
   align-items: center;
-  border: 1px solid rgba(21, 79, 86, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 999px;
   padding: 7px 12px;
-  background: rgba(255, 255, 255, 0.66);
-  color: #2d555d;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.76);
   font-size: 12px;
   font-weight: 700;
 }
@@ -58,12 +58,12 @@
   font-size: clamp(24px, 4vw, 36px);
   line-height: 1.08;
   letter-spacing: -0.015em;
-  color: #1f2f33;
+  color: #fff;
 }
 
 .subtitle {
   margin: 8px 0 0;
-  color: #436167;
+  color: rgba(255, 255, 255, 0.74);
   font-size: 14px;
   line-height: 1.62;
 }
@@ -80,15 +80,15 @@
   align-items: center;
   gap: 6px;
   border-radius: 999px;
-  border: 1px solid rgba(22, 74, 81, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.76);
-  color: #34565c;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.82);
   font-size: 12px;
 }
 
 .pill strong {
-  color: #0f7888;
+  color: #dac9ff;
 }
 
 .searchWrap {
@@ -99,24 +99,28 @@
   width: min(540px, 100%);
   min-height: 44px;
   border-radius: 12px;
-  border: 1px solid rgba(22, 72, 79, 0.2);
-  background: rgba(255, 255, 255, 0.86);
-  color: #23464d;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
   padding: 10px 12px;
   font-size: 14px;
   outline: none;
 }
 
+.searchInput::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
 .searchInput:focus {
-  border-color: rgba(14, 123, 135, 0.6);
-  box-shadow: 0 0 0 3px rgba(15, 128, 142, 0.15);
+  border-color: rgba(122, 61, 255, 0.9);
+  box-shadow: 0 0 0 3px rgba(122, 61, 255, 0.2);
 }
 
 .errorCard {
   border-radius: 12px;
-  border: 1px solid rgba(179, 52, 52, 0.3);
-  background: rgba(255, 237, 237, 0.86);
-  color: #8f2424;
+  border: 1px solid rgba(255, 77, 79, 0.45);
+  background: rgba(255, 77, 79, 0.14);
+  color: #ffc6c8;
   font-size: 13px;
   line-height: 1.6;
   padding: 10px 12px;
@@ -124,9 +128,9 @@
 
 .emptyCard {
   border-radius: 14px;
-  border: 1px dashed rgba(29, 82, 89, 0.28);
-  background: rgba(255, 255, 255, 0.74);
-  color: #4d6970;
+  border: 1px dashed rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.7);
   text-align: center;
   padding: 22px 12px;
   font-size: 14px;
@@ -140,9 +144,9 @@
 
 .card {
   border-radius: 16px;
-  border: 1px solid rgba(25, 74, 82, 0.13);
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 10px 24px rgba(27, 56, 61, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(18, 16, 28, 0.9);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
   overflow: hidden;
   display: grid;
   grid-template-rows: auto 1fr;
@@ -150,19 +154,19 @@
 
 .cardHead {
   padding: 12px 12px 10px;
-  border-bottom: 1px solid rgba(24, 75, 83, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .cardTitle {
   margin: 0;
-  color: #22353a;
+  color: #fff;
   font-size: 17px;
   line-height: 1.35;
 }
 
 .cardSub {
   margin-top: 4px;
-  color: #57757b;
+  color: rgba(255, 255, 255, 0.64);
   font-size: 12px;
   line-height: 1.5;
   word-break: break-word;
@@ -181,15 +185,15 @@
 }
 
 .okBadge {
-  color: #15794f;
-  border: 1px solid rgba(21, 120, 79, 0.3);
-  background: rgba(233, 250, 241, 0.9);
+  color: #9effd1;
+  border: 1px solid rgba(25, 195, 125, 0.4);
+  background: rgba(25, 195, 125, 0.16);
 }
 
 .failBadge {
-  color: #9a2828;
-  border: 1px solid rgba(154, 40, 40, 0.3);
-  background: rgba(255, 237, 237, 0.9);
+  color: #ffc6c8;
+  border: 1px solid rgba(255, 77, 79, 0.4);
+  background: rgba(255, 77, 79, 0.16);
 }
 
 .cardBody {
@@ -203,21 +207,21 @@
   display: grid;
   grid-template-columns: 66px 1fr;
   gap: 8px;
-  color: #5d767b;
+  color: rgba(255, 255, 255, 0.6);
   font-size: 12px;
 }
 
 .metaLine span:last-child {
-  color: #2f4d53;
+  color: rgba(255, 255, 255, 0.86);
   font-weight: 600;
   word-break: break-word;
 }
 
 .resolveHint {
   border-radius: 10px;
-  border: 1px solid rgba(30, 92, 103, 0.18);
-  background: rgba(240, 250, 252, 0.86);
-  color: #2d5d66;
+  border: 1px solid rgba(130, 154, 255, 0.38);
+  background: rgba(130, 154, 255, 0.12);
+  color: #d7dfff;
   padding: 8px 10px;
   font-size: 12px;
   line-height: 1.5;
@@ -225,8 +229,8 @@
 
 .qrWrap {
   border-radius: 12px;
-  border: 1px solid rgba(26, 79, 87, 0.14);
-  background: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.96);
   padding: 8px;
   width: fit-content;
 }
@@ -252,36 +256,42 @@
   padding: 8px 12px;
   font-size: 13px;
   font-weight: 700;
-  border: 1px solid rgba(16, 95, 107, 0.3);
-  background: linear-gradient(180deg, #ffffff 0%, #eef8fb 100%);
-  color: #1f5f6a;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: #efe9ff;
   text-decoration: none;
   cursor: pointer;
 }
 
+.primaryBtn {
+  border-color: rgba(170, 138, 255, 0.58);
+  background: linear-gradient(135deg, rgba(99, 0, 255, 0.5), rgba(122, 61, 255, 0.42));
+  color: #fff;
+}
+
 .copyBtn {
-  border-color: rgba(168, 102, 18, 0.36);
-  background: linear-gradient(180deg, #fffaf0 0%, #fff0d8 100%);
-  color: #865109;
+  border-color: rgba(245, 165, 36, 0.44);
+  background: rgba(245, 165, 36, 0.2);
+  color: #ffd898;
 }
 
 .copyBtnDone {
-  border-color: rgba(26, 126, 76, 0.36);
-  background: linear-gradient(180deg, #edfaf2 0%, #e0f6ea 100%);
-  color: #1f7a50;
+  border-color: rgba(25, 195, 125, 0.44);
+  background: rgba(25, 195, 125, 0.22);
+  color: #9effd1;
 }
 
 .logBtn {
-  border-color: rgba(35, 80, 138, 0.3);
-  background: linear-gradient(180deg, #f7fbff 0%, #eaf3ff 100%);
-  color: #2a4f8e;
+  border-color: rgba(130, 154, 255, 0.48);
+  background: rgba(130, 154, 255, 0.16);
+  color: #d7dfff;
 }
 
 .errorText {
   border-radius: 10px;
-  border: 1px solid rgba(176, 51, 51, 0.3);
-  background: rgba(255, 238, 238, 0.84);
-  color: #922727;
+  border: 1px solid rgba(255, 77, 79, 0.44);
+  background: rgba(255, 77, 79, 0.14);
+  color: #ffc6c8;
   font-size: 12px;
   line-height: 1.55;
   padding: 8px 10px;
@@ -289,9 +299,9 @@
 
 .suggestText {
   border-radius: 10px;
-  border: 1px solid rgba(174, 119, 23, 0.24);
-  background: rgba(255, 247, 231, 0.9);
-  color: #895810;
+  border: 1px solid rgba(245, 165, 36, 0.42);
+  background: rgba(245, 165, 36, 0.16);
+  color: #ffd79c;
   font-size: 12px;
   line-height: 1.55;
   padding: 8px 10px;
@@ -302,9 +312,9 @@
   max-height: 190px;
   overflow: auto;
   border-radius: 10px;
-  border: 1px solid rgba(168, 95, 45, 0.23);
-  background: rgba(255, 245, 235, 0.9);
-  color: #985a22;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(7, 9, 16, 0.9);
+  color: rgba(255, 255, 255, 0.75);
   font-size: 11px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -325,10 +335,4 @@
   .grid {
     grid-template-columns: 1fr;
   }
-
-  .qrImage {
-    width: 150px;
-    height: 150px;
-  }
 }
-

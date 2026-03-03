@@ -17,7 +17,7 @@ export async function GET(request, { params }) {
     )
   }
   try {
-    const note = await getMeetingNote(id)
+    const note = await getMeetingNote(id, String(auth.user?.id || ''))
     if (!note) {
       return Response.json(
         { success: false, error: 'note not found' },

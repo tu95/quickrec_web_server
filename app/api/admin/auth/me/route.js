@@ -1,13 +1,18 @@
-import { requireAdminAuth } from '../../../_lib/admin-auth'
+import { requireUserAuth } from '../../../_lib/user-auth'
 
 export async function GET(request) {
-  const auth = await requireAdminAuth(request)
+  const auth = await requireUserAuth(request)
   if (!auth.ok) {
     return Response.json(
       { success: false, error: auth.error },
       { status: auth.status }
     )
   }
-  return Response.json({ success: true })
+  return Response.json({
+    success: true,
+    user: {
+      id: String(auth?.user?.id || ''),
+      email: String(auth?.user?.email || '')
+    }
+  })
 }
-

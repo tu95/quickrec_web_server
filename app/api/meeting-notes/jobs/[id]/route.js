@@ -10,7 +10,7 @@ export async function GET(request, { params }) {
     )
   }
   const id = String(params?.id || '')
-  const job = await getMeetingJob(id)
+  const job = await getMeetingJob(id, String(auth.user?.id || ''))
   if (!job) {
     return Response.json(
       { success: false, error: 'job not found' },

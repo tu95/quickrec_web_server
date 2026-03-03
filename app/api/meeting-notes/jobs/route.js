@@ -23,7 +23,8 @@ export async function POST(request) {
       origin: getRequestOrigin(request),
       providerId: String(body?.providerId || ''),
       model: String(body?.model || ''),
-      promptId: String(body?.promptId || '')
+      promptId: String(body?.promptId || ''),
+      userId: String(auth.user?.id || '')
     })
     return Response.json({
       success: true,

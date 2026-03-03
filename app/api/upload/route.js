@@ -2,8 +2,9 @@ import { promises as fs } from 'fs'
 import { extname, join } from 'path'
 import { networkInterfaces } from 'os'
 import { enqueueMp3Convert } from '../_lib/mp3-queue'
-import { readConfig } from '../_lib/config-store'
+import { readConfigForUser } from '../_lib/config-store'
 import { createMeetingJob } from '../_lib/meeting-notes'
+import { requireUserAuth } from '../_lib/user-auth'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const CORS_HEADERS = {
@@ -44,6 +45,20 @@ function safeFileName(name) {
 export async function POST(request) {
   try {
     await ensureUploadDir()
+    const auth = await requireUserAuth(request)
+    if (!auth.ok) {
+      return Response.json(
+        { success: false, error: auth.error || '未登录' },
+        { status: auth.status || 401, headers: CORS_HEADERS }
+      )
+    }
+    const userId = String(auth.user?.id || '').trim()
+    if (!userId) {
+      return Response.json(
+        { success: false, error: '用户信息无效，请重新登录' },
+        { status: 401, headers: CORS_HEADERS }
+      )
+    }
 
     // 使用 multiparty 需要 Node.js 的 req 对象
     // Next.js App Router 中需要转换
@@ -120,11 +135,12 @@ export async function POST(request) {
     const primaryUrl = mp3Url || sourceUrl
     if (extname(outputFilename).toLowerCase() === '.mp3') {
       try {
-        const config = await readConfig()
+        const config = await readConfigForUser(userId)
         if (config?.meeting?.autoGenerateOnMp3Upload === true) {
           const job = await createMeetingJob({
             fileName: outputFilename,
-            origin: 'auto-upload'
+            origin: 'auto-upload',
+            userId
           })
           autoMeetingJobId = String(job?.id || '')
         }

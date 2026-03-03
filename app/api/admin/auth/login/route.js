@@ -1,29 +1,38 @@
 import {
-  buildSiteSessionCookie,
-  createSiteToken,
-  getSitePassword
-} from '../../../_lib/admin-auth'
-import { readConfig } from '../../../_lib/config-store'
+  buildUserSessionCookies,
+  loginWithPassword
+} from '../../../_lib/user-auth'
+
+function createHeadersWithCookies(cookies) {
+  const headers = new Headers()
+  const list = Array.isArray(cookies) ? cookies : []
+  for (const cookie of list) {
+    headers.append('Set-Cookie', cookie)
+  }
+  return headers
+}
 
 export async function POST(request) {
-  const body = await request.json().catch(() => null)
-  const inputKey = String(body?.key || '')
-  const config = await readConfig()
-  const expectedKey = await getSitePassword(config)
-  if (!inputKey || inputKey !== expectedKey) {
+  try {
+    const body = await request.json().catch(() => null)
+    const email = String(body?.email || '').trim()
+    const password = String(body?.password || '')
+    if (!email || !password) {
+      return Response.json(
+        { success: false, error: '邮箱和密码不能为空' },
+        { status: 400 }
+      )
+    }
+    const login = await loginWithPassword(email, password)
+    const headers = createHeadersWithCookies(buildUserSessionCookies(login.session))
     return Response.json(
-      { success: false, error: '密钥错误' },
+      { success: true },
+      { headers }
+    )
+  } catch (error) {
+    return Response.json(
+      { success: false, error: String(error?.message || error) },
       { status: 401 }
     )
   }
-
-  const token = createSiteToken(expectedKey)
-  return Response.json(
-    { success: true },
-    {
-      headers: {
-        'Set-Cookie': buildSiteSessionCookie(token)
-      }
-    }
-  )
 }

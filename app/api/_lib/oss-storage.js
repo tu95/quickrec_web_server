@@ -87,3 +87,42 @@ export async function uploadLocalFileToOss(config, localFilePath, objectFileName
     bucket: normalized.bucket
   }
 }
+
+export async function uploadBufferToOss(config, buffer, objectFileName, options) {
+  const safeFileName = basename(String(objectFileName || ''))
+  if (!safeFileName || safeFileName === '.' || safeFileName === '..') {
+    throw new Error('OSS 上传失败: 无效文件名')
+  }
+  if (!Buffer.isBuffer(buffer) || buffer.length <= 0) {
+    throw new Error('OSS 上传失败: 空文件内容')
+  }
+
+  const { client, normalized } = createOssClientFromConfig(config)
+  const prefix = trimSlash(normalized.objectPrefix)
+  const objectKey = prefix ? `${prefix}/${safeFileName}` : safeFileName
+  await client.put(objectKey, buffer)
+
+  const signedUrlExpiresSec = toSignedUrlExpiresSec(options?.signedUrlExpiresSec)
+  let signedUrl = ''
+  try {
+    signedUrl = client.signatureUrl(objectKey, {
+      method: 'GET',
+      expires: signedUrlExpiresSec
+    })
+  } catch (error) {
+    throw new Error(`OSS 签名链接生成失败: ${String(error && error.message ? error.message : error)}`)
+  }
+
+  const publicBaseUrl = String(normalized.publicBaseUrl || '').replace(/\/+$/, '')
+  const publicUrl = publicBaseUrl
+    ? `${publicBaseUrl}/${encodePath(objectKey)}`
+    : ''
+
+  return {
+    objectKey,
+    url: publicUrl,
+    signedUrl,
+    signedUrlExpiresSec,
+    bucket: normalized.bucket
+  }
+}

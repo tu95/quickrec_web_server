@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs'
 import { basename, extname, join } from 'path'
-import { readConfig } from './config-store'
+import { readConfigForUser } from './config-store'
 import { runChat } from './llm-client'
 import { enqueueMp3Convert } from './mp3-queue'
 import { uploadLocalFileToOss } from './oss-storage'
@@ -69,6 +69,18 @@ function safeEntityId(rawId) {
   const name = basename(value)
   if (!name || name === '.' || name === '..' || name !== value) return ''
   return name
+}
+
+function normalizeUserId(rawUserId) {
+  return String(rawUserId || '').trim()
+}
+
+function canAccessByUser(ownerUserId, requestUserId) {
+  const owner = normalizeUserId(ownerUserId)
+  const requester = normalizeUserId(requestUserId)
+  if (!requester) return true
+  if (!owner) return true
+  return owner === requester
 }
 
 function getJobFilePath(jobId) {
@@ -647,7 +659,7 @@ async function runMeetingJob(job) {
 
   try {
     await ensureJobNotCancelled(current)
-    const config = await readConfig()
+    const config = await readConfigForUser(current.userId)
     await ensureJobNotCancelled(current)
     const asrSource = await resolveAsrSourceFile(current.fileName)
     const signedUrlExpiresSec = Number(config?.aliyun?.oss?.asrSignedUrlExpiresSec || 21600)
@@ -740,6 +752,7 @@ async function runMeetingJob(job) {
     const persistedMarkdown = `${markdown}\n`
     const asrArchive = {
       noteId,
+      userId: normalizeUserId(current.userId),
       fileName: current.fileName,
       createdAt: Date.now(),
       asrAudioUrl: String(current.asrAudioUrl || ''),
@@ -756,6 +769,7 @@ async function runMeetingJob(job) {
     }
     const metadata = {
       id: noteId,
+      userId: normalizeUserId(current.userId),
       fileName: current.fileName,
       createdAt: Date.now(),
       providerId: provider.id,
@@ -813,6 +827,7 @@ export async function createMeetingJob(input) {
   const id = makeId('job')
   const job = {
     id,
+    userId: normalizeUserId(input?.userId),
     fileName,
     origin: String(input?.origin || ''),
     status: 'queued',
@@ -833,15 +848,19 @@ export async function createMeetingJob(input) {
   return toClientJob(job)
 }
 
-export async function getMeetingJob(id) {
+export async function getMeetingJob(id, userId) {
   const jobId = safeEntityId(id)
   if (!jobId) return null
 
   const inMemory = JOBS.get(jobId)
-  if (inMemory) return toClientJob(inMemory)
+  if (inMemory) {
+    if (!canAccessByUser(inMemory.userId, userId)) return null
+    return toClientJob(inMemory)
+  }
 
   const stored = await readPersistedJob(jobId)
   if (!stored) return null
+  if (!canAccessByUser(stored.userId, userId)) return null
   JOBS.set(jobId, stored)
   return toClientJob(stored)
 }
@@ -866,7 +885,7 @@ export async function cancelMeetingJob(id) {
   return toClientJob(cancelled)
 }
 
-export async function getMeetingNote(noteId) {
+export async function getMeetingNote(noteId, userId) {
   const safeNoteId = safeEntityId(noteId)
   if (!safeNoteId) return null
   const markdownPath = getNoteMarkdownPath(safeNoteId)
@@ -876,6 +895,9 @@ export async function getMeetingNote(noteId) {
     const markdown = await fs.readFile(markdownPath, 'utf8')
     const metadataText = await fs.readFile(metadataPath, 'utf8')
     const metadata = JSON.parse(metadataText)
+    if (!canAccessByUser(metadata?.userId, userId)) {
+      return null
+    }
     const hasAsrArchive = await existsFile(asrArchivePath)
     return {
       markdown,
@@ -889,7 +911,7 @@ export async function getMeetingNote(noteId) {
   }
 }
 
-export async function getMeetingNoteAsr(noteId) {
+export async function getMeetingNoteAsr(noteId, userId) {
   const safeNoteId = safeEntityId(noteId)
   if (!safeNoteId) return null
   const asrArchivePath = getAsrArchivePath(safeNoteId)
@@ -897,6 +919,9 @@ export async function getMeetingNoteAsr(noteId) {
     const raw = await fs.readFile(asrArchivePath, 'utf8')
     const parsed = JSON.parse(raw)
     if (!parsed || typeof parsed !== 'object') return null
+    if (!canAccessByUser(parsed?.userId, userId)) {
+      return null
+    }
     const transcript = String(parsed.transcript || '').trim()
     return {
       ...parsed,

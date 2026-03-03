@@ -1,5 +1,6 @@
 import crypto from 'crypto'
-import { readConfig } from './config-store'
+import { readConfigForUser } from './config-store'
+import { requireUserAuth } from './user-auth'
 
 const SITE_COOKIE_NAME = 'zr_site_session'
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7
@@ -109,34 +110,30 @@ export async function getReadonlySitePassword(config) {
 }
 
 export async function requireSiteAuth(request) {
-  const config = await readConfig()
-  const adminKey = await getSitePassword(config)
-  const readonlyKey = await getReadonlySitePassword(config)
-  if (!adminKey) {
+  const userAuth = await requireUserAuth(request)
+  if (!userAuth.ok) {
     return {
       ok: false,
-      status: 403,
-      error: 'sitePassword 未配置，请先在 config.json 设置'
+      status: userAuth.status || 401,
+      error: String(userAuth.error || '未授权，请先登录网站')
     }
   }
-  const cookieMap = parseCookiesFromHeader(request.headers.get('cookie'))
-  const token = cookieMap[SITE_COOKIE_NAME]
-  const adminToken = verifySiteToken(token, adminKey)
-  const readonlyToken = !adminToken ? verifySiteToken(token, readonlyKey) : null
-  const session = adminToken || readonlyToken
-  if (!session) {
+  let config
+  try {
+    config = await readConfigForUser(userAuth.user?.id)
+  } catch (error) {
     return {
       ok: false,
-      status: 401,
-      error: '未授权，请先登录网站'
+      status: 503,
+      error: `读取用户配置失败，请稍后重试（${String(error?.message || error)}）`
     }
   }
-  const role = session.role === 'readonly' ? 'readonly' : 'admin'
   return {
     ok: true,
     config,
-    role,
-    readOnly: role !== 'admin'
+    user: userAuth.user,
+    role: 'admin',
+    readOnly: false
   }
 }
 

@@ -6,13 +6,18 @@ export function middleware(request) {
   const pathname = request.nextUrl.pathname || '/'
   const isApiRoute = pathname.startsWith('/api/')
   const isStaticAsset = pathname.startsWith('/_next/') || pathname === '/favicon.ico'
-  const siteSession = request.cookies.get('zr_site_session')?.value || ''
-  const isLoginPage = pathname === '/login'
+  const userSession = request.cookies.get('zr_user_access_token')?.value || ''
+  const hasBearerAuth = /^bearer\s+/i.test(String(request.headers.get('authorization') || '').trim())
+  const isLoginPage = pathname === '/login' || pathname === '/user/login'
   const protectedApiPrefixes = [
     '/api/admin/',
+    '/api/user/',
     '/api/files',
     '/api/meeting-notes',
-    '/api/convert-mp3'
+    '/api/convert-mp3',
+    '/api/upload',
+    '/api/upload-test',
+    '/api/upload-chunk'
   ]
   const isProtectedApi = protectedApiPrefixes.some(prefix => pathname.startsWith(prefix))
 
@@ -26,25 +31,19 @@ export function middleware(request) {
     return NextResponse.next()
   }
 
-  if (isApiRoute && isProtectedApi && !siteSession) {
+  if (isApiRoute && isProtectedApi && !userSession && !hasBearerAuth) {
     return NextResponse.json(
       { success: false, error: '未登录，请先访问 /login' },
       { status: 401 }
     )
   }
 
-  if (!isApiRoute && !isLoginPage && !siteSession) {
+  if (!isApiRoute && !isLoginPage && !userSession) {
     const loginUrl = request.nextUrl.clone()
     loginUrl.pathname = '/login'
     const nextPath = `${pathname}${request.nextUrl.search || ''}`
     loginUrl.searchParams.set('next', nextPath)
     return NextResponse.redirect(loginUrl)
-  }
-
-  if (!isApiRoute && isLoginPage && siteSession) {
-    const next = request.nextUrl.searchParams.get('next') || '/'
-    const targetUrl = new URL(next.startsWith('/') ? next : '/', request.url)
-    return NextResponse.redirect(targetUrl)
   }
 
   return NextResponse.next()

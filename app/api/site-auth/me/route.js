@@ -1,7 +1,7 @@
-import { requireSiteAuth } from '../../_lib/admin-auth'
+import { requireUserAuth } from '../../_lib/user-auth'
 
 export async function GET(request) {
-  const auth = await requireSiteAuth(request)
+  const auth = await requireUserAuth(request)
   if (!auth.ok) {
     return Response.json(
       { success: false, authenticated: false, error: auth.error },
@@ -11,7 +11,9 @@ export async function GET(request) {
   return Response.json({
     success: true,
     authenticated: true,
-    role: auth.role || 'admin',
-    readOnly: auth.readOnly === true
+    user: {
+      id: String(auth?.user?.id || ''),
+      email: String(auth?.user?.email || '')
+    }
   })
 }

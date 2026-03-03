@@ -1,6 +1,5 @@
 import { headers } from 'next/headers'
 import FileManagerClient from './FileManagerClient'
-import HomeAuthActions from './home-auth-actions'
 
 function getRequestOrigin() {
   const headerStore = headers()
@@ -40,12 +39,24 @@ export default async function Home() {
       <section className="hero">
         <p className="hero-kicker">Zepp Recorder</p>
         <h1 className="hero-title">录音文件控制台</h1>
-        <p className="hero-subtitle">上传后自动转 MP3，录音与归档分区管理，移动端可直接操作。</p>
+        <p className="hero-subtitle">
+          先绑定设备，再上传录音。上传后自动转 MP3，并同步进入你的账号空间。
+        </p>
         <div className="server-pill">
           <span>服务器地址</span>
           <code>{origin}</code>
         </div>
-        <HomeAuthActions />
+        <div className="pair-steps">
+          <div className="pair-step-card">
+            <strong>步骤 1：</strong>手表端获取配对码
+          </div>
+          <div className="pair-step-card">
+            <strong>步骤 2：</strong>在网页绑定设备
+          </div>
+          <div className="pair-step-card">
+            <strong>步骤 3：</strong>设备上传录音并自动入库
+          </div>
+        </div>
       </section>
 
       <section className="panel">

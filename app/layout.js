@@ -1,4 +1,5 @@
 import './globals.css'
+import HomeAuthActions from './home-auth-actions'
 
 export const metadata = {
   title: '录音文件管理',
@@ -12,7 +13,14 @@ export const viewport = {
 export default function RootLayout({ children }) {
   return (
     <html lang="zh-CN">
-      <body>{children}</body>
+      <body>
+        <div className="global-top-nav-wrap">
+          <div className="global-top-nav">
+            <HomeAuthActions />
+          </div>
+        </div>
+        {children}
+      </body>
     </html>
   )
 }

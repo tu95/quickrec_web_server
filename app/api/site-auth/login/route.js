@@ -1,47 +1,38 @@
 import {
-  buildSiteSessionCookie,
-  createSiteToken,
-  getReadonlySitePassword,
-  getSitePassword
-} from '../../_lib/admin-auth'
-import { readConfig } from '../../_lib/config-store'
+  buildUserSessionCookies,
+  loginWithPassword
+} from '../../_lib/user-auth'
+
+function createHeadersWithCookies(cookies) {
+  const headers = new Headers()
+  const list = Array.isArray(cookies) ? cookies : []
+  for (const cookie of list) {
+    headers.append('Set-Cookie', cookie)
+  }
+  return headers
+}
 
 export async function POST(request) {
-  const body = await request.json().catch(() => null)
-  const inputPassword = String(body?.password || body?.key || '')
-  const config = await readConfig()
-  const expectedPassword = await getSitePassword(config)
-  const readonlyPassword = await getReadonlySitePassword(config)
-
-  if (!inputPassword) {
-    return Response.json(
-      { success: false, error: '密码错误' },
-      { status: 401 }
-    )
-  }
-
-  let role = ''
-  let signKey = ''
-  if (inputPassword === expectedPassword) {
-    role = 'admin'
-    signKey = expectedPassword
-  } else if (inputPassword === readonlyPassword) {
-    role = 'readonly'
-    signKey = readonlyPassword
-  } else {
-    return Response.json(
-      { success: false, error: '密码错误' },
-      { status: 401 }
-    )
-  }
-
-  const token = createSiteToken(signKey, role)
-  return Response.json(
-    { success: true, role, readOnly: role !== 'admin' },
-    {
-      headers: {
-        'Set-Cookie': buildSiteSessionCookie(token)
-      }
+  try {
+    const body = await request.json().catch(() => null)
+    const email = String(body?.email || '').trim()
+    const password = String(body?.password || '')
+    if (!email || !password) {
+      return Response.json(
+        { success: false, error: '邮箱和密码不能为空' },
+        { status: 400 }
+      )
     }
-  )
+    const login = await loginWithPassword(email, password)
+    const headers = createHeadersWithCookies(buildUserSessionCookies(login.session))
+    return Response.json(
+      { success: true },
+      { headers }
+    )
+  } catch (error) {
+    return Response.json(
+      { success: false, error: String(error?.message || error) },
+      { status: 401 }
+    )
+  }
 }

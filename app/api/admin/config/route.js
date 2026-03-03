@@ -1,9 +1,8 @@
 import { requireAdminAuth } from '../../_lib/admin-auth'
 import {
   mergeConfigWithSecretPreserve,
-  readConfig,
   sanitizeConfigForClient,
-  writeConfig
+  writeConfigForUser
 } from '../../_lib/config-store'
 import { validateOssConfig } from '../../../../lib/aliyun-validators'
 
@@ -15,10 +14,9 @@ export async function GET(request) {
       { status: auth.status }
     )
   }
-  const config = await readConfig()
   return Response.json({
     success: true,
-    config: sanitizeConfigForClient(config),
+    config: sanitizeConfigForClient(auth.config),
     role: auth.role || 'admin',
     readOnly: auth.readOnly === true
   })
@@ -47,7 +45,7 @@ export async function PUT(request) {
       { status: 400 }
     )
   }
-  const currentConfig = await readConfig()
+  const currentConfig = auth.config || {}
   const nextPayload = mergeConfigWithSecretPreserve(currentConfig, payload)
   const ossValidation = validateOssConfig(nextPayload?.aliyun?.oss || {})
   if (!ossValidation.valid) {
@@ -70,7 +68,8 @@ export async function PUT(request) {
   }
 
   try {
-    const saved = await writeConfig(nextPayload)
+    const userId = String(auth.user?.id || '').trim()
+    const saved = await writeConfigForUser(userId, nextPayload)
     return Response.json({ success: true, config: sanitizeConfigForClient(saved) })
   } catch (error) {
     return Response.json(
