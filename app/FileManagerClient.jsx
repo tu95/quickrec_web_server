@@ -7,6 +7,27 @@ function formatDate(timestamp) {
   return new Date(timestamp).toLocaleString('zh-CN')
 }
 
+function toDurationSeconds(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return 0
+  return Math.floor(n)
+}
+
+function formatDuration(seconds) {
+  const total = toDurationSeconds(seconds)
+  if (!total) return '--'
+  const sec = total % 60
+  const minTotal = Math.floor(total / 60)
+  const min = minTotal % 60
+  const hour = Math.floor(minTotal / 60)
+  const ss = String(sec).padStart(2, '0')
+  const mm = String(min).padStart(2, '0')
+  if (hour > 0) {
+    return `${String(hour).padStart(2, '0')}:${mm}:${ss}`
+  }
+  return `${mm}:${ss}`
+}
+
 function getDisplayTitle(file) {
   const title = String(file?.latestNoteTitle || '').trim()
   if (title) return title
@@ -48,6 +69,7 @@ function normalizeNoteViewUrl(rawUrl) {
 export default function FileManagerClient({ origin, initialFiles }) {
   const router = useRouter()
   const [files, setFiles] = useState(Array.isArray(initialFiles) ? initialFiles : [])
+  const [durationFallbackMap, setDurationFallbackMap] = useState({})
   const [activeTab, setActiveTab] = useState('recording')
   const [loading, setLoading] = useState(false)
   const [busyMap, setBusyMap] = useState({})
@@ -56,13 +78,23 @@ export default function FileManagerClient({ origin, initialFiles }) {
   const [noteJobMap, setNoteJobMap] = useState({})
   const [noteErrorLog, setNoteErrorLog] = useState('')
   const [message, setMessage] = useState('')
-  const [player, setPlayer] = useState({ url: '', label: '', token: 0 })
+  const [player, setPlayer] = useState({
+    fileName: '',
+    url: '',
+    label: '',
+    token: 0,
+    playing: false,
+    currentTime: 0,
+    duration: 0,
+    error: ''
+  })
   const audioRef = useRef(null)
   const pollTimerRef = useRef(null)
   const pollInFlightRef = useRef(false)
   const pollingJobsRef = useRef(new Map())
   const autoOpenJobIdsRef = useRef(new Set())
   const lastPollingErrorRef = useRef('')
+  const durationProbeInFlightRef = useRef(new Set())
   const meetingPollIntervalMs = 2500
 
   const grouped = useMemo(() => {
@@ -397,9 +429,55 @@ export default function FileManagerClient({ origin, initialFiles }) {
     }
   }
 
-  function play(url, label) {
-    if (!url) return
-    setPlayer({ url, label, token: Date.now() })
+  function togglePlay(file) {
+    if (!file || !isPlayableExt(file.ext)) return
+    const fileName = String(file.name || '')
+    if (!fileName) return
+    const url = `/api/files/${encodeURIComponent(fileName)}`
+    const label = String(file.name || '')
+    const sameFile = String(player.fileName || '') === fileName && String(player.url || '') === url
+    const audioEl = audioRef.current
+
+    if (sameFile && audioEl) {
+      if (audioEl.paused) {
+        const promise = audioEl.play()
+        if (promise && typeof promise.catch === 'function') promise.catch(() => {})
+        setPlayer(prev => ({ ...prev, playing: true, error: '' }))
+      } else {
+        audioEl.pause()
+        setPlayer(prev => ({ ...prev, playing: false }))
+      }
+      return
+    }
+
+    if (!sameFile && audioEl && typeof audioEl.pause === 'function') {
+      audioEl.pause()
+    }
+
+    setPlayer({
+      fileName,
+      url,
+      label,
+      token: Date.now(),
+      playing: true,
+      currentTime: 0,
+      duration: toDurationSeconds(file.durationSec) || toDurationSeconds(durationFallbackMap[fileName]),
+      error: ''
+    })
+  }
+
+  function seekCurrentPlayback(fileName, nextTimeRaw) {
+    const currentFileName = String(player.fileName || '')
+    if (!currentFileName || currentFileName !== String(fileName || '')) return
+    const audioEl = audioRef.current
+    if (!audioEl || typeof audioEl.currentTime !== 'number') return
+    const maxDur = toDurationSeconds(player.duration) || toDurationSeconds(audioEl.duration)
+    if (!maxDur) return
+    const next = Number(nextTimeRaw)
+    if (!Number.isFinite(next)) return
+    const clamped = Math.max(0, Math.min(next, maxDur))
+    audioEl.currentTime = clamped
+    setPlayer(prev => ({ ...prev, currentTime: clamped }))
   }
 
   useEffect(() => {
@@ -455,14 +533,185 @@ export default function FileManagerClient({ origin, initialFiles }) {
   }, [])
 
   useEffect(() => {
-    if (!player.url) return
+    if (typeof window === 'undefined' || typeof window.Audio !== 'function') return
+    const fileNames = new Set()
+    for (const file of files) {
+      const name = String(file?.name || '').trim()
+      if (!name) continue
+      fileNames.add(name)
+    }
+
+    setDurationFallbackMap(prev => {
+      let changed = false
+      const next = { ...prev }
+      for (const key of Object.keys(next)) {
+        if (!fileNames.has(key)) {
+          delete next[key]
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+
+    const targets = []
+    for (const file of files) {
+      const fileName = String(file?.name || '').trim()
+      if (!fileName) continue
+      if (!isPlayableExt(file.ext)) continue
+      if (toDurationSeconds(file.durationSec) > 0) continue
+      if (toDurationSeconds(durationFallbackMap[fileName]) > 0) continue
+      if (durationProbeInFlightRef.current.has(fileName)) continue
+      targets.push(fileName)
+    }
+    if (targets.length === 0) return
+
+    let disposed = false
+    let index = 0
+    const workers = Math.min(3, targets.length)
+
+    const readDurationByName = (fileName) => new Promise(resolve => {
+      const audio = new window.Audio()
+      let finished = false
+      const complete = (seconds) => {
+        if (finished) return
+        finished = true
+        clearTimeout(timeoutId)
+        try {
+          audio.pause()
+        } catch {}
+        audio.removeEventListener('loadedmetadata', onLoaded)
+        audio.removeEventListener('error', onError)
+        try {
+          audio.src = ''
+          audio.load()
+        } catch {}
+        resolve(toDurationSeconds(seconds))
+      }
+      const onLoaded = () => complete(audio.duration)
+      const onError = () => complete(0)
+      const timeoutId = window.setTimeout(() => complete(0), 15000)
+      audio.preload = 'metadata'
+      audio.addEventListener('loadedmetadata', onLoaded, { once: true })
+      audio.addEventListener('error', onError, { once: true })
+      audio.src = `/api/files/${encodeURIComponent(fileName)}`
+      try {
+        audio.load()
+      } catch {
+        complete(0)
+      }
+    })
+
+    const runWorker = async () => {
+      while (!disposed) {
+        const targetIndex = index
+        index += 1
+        if (targetIndex >= targets.length) return
+        const fileName = targets[targetIndex]
+        durationProbeInFlightRef.current.add(fileName)
+        try {
+          const seconds = await readDurationByName(fileName)
+          if (disposed || seconds <= 0) continue
+          setDurationFallbackMap(prev => {
+            if (toDurationSeconds(prev[fileName]) > 0) return prev
+            return { ...prev, [fileName]: seconds }
+          })
+        } finally {
+          durationProbeInFlightRef.current.delete(fileName)
+        }
+      }
+    }
+
+    for (let i = 0; i < workers; i += 1) {
+      void runWorker()
+    }
+
+    return () => {
+      disposed = true
+    }
+  }, [files, durationFallbackMap])
+
+  useEffect(() => {
+    const fileName = String(player.fileName || '')
+    const url = String(player.url || '')
+    if (!fileName || !url) return
     const audioEl = audioRef.current
     if (!audioEl || typeof audioEl.play !== 'function') return
+    const activeToken = Number(player.token || 0)
+
+    function patchCurrentState(mutator) {
+      setPlayer(prev => {
+        if (
+          String(prev.fileName || '') !== fileName ||
+          String(prev.url || '') !== url ||
+          Number(prev.token || 0) !== activeToken
+        ) {
+          return prev
+        }
+        return mutator(prev)
+      })
+    }
+
+    const onLoadedMetadata = () => {
+      const safeDuration = toDurationSeconds(audioEl.duration)
+      if (!safeDuration) return
+      patchCurrentState(prev => ({ ...prev, duration: safeDuration, error: '' }))
+    }
+    const onTimeUpdate = () => {
+      const safeCurrent = Math.max(0, Number(audioEl.currentTime) || 0)
+      const safeDuration = toDurationSeconds(audioEl.duration)
+      patchCurrentState(prev => ({
+        ...prev,
+        currentTime: safeCurrent,
+        duration: safeDuration || prev.duration,
+        playing: !audioEl.paused
+      }))
+    }
+    const onPlay = () => {
+      patchCurrentState(prev => ({ ...prev, playing: true, error: '' }))
+    }
+    const onPause = () => {
+      patchCurrentState(prev => ({ ...prev, playing: false }))
+    }
+    const onEnded = () => {
+      patchCurrentState(prev => ({
+        ...prev,
+        fileName: '',
+        url: '',
+        label: '',
+        token: Date.now(),
+        playing: false,
+        currentTime: 0,
+        duration: 0,
+        error: ''
+      }))
+    }
+    const onError = () => {
+      patchCurrentState(prev => ({ ...prev, playing: false, error: '音频加载失败' }))
+    }
+
+    audioEl.addEventListener('loadedmetadata', onLoadedMetadata)
+    audioEl.addEventListener('timeupdate', onTimeUpdate)
+    audioEl.addEventListener('play', onPlay)
+    audioEl.addEventListener('pause', onPause)
+    audioEl.addEventListener('ended', onEnded)
+    audioEl.addEventListener('error', onError)
+
     const playPromise = audioEl.play()
     if (playPromise && typeof playPromise.catch === 'function') {
-      playPromise.catch(() => {})
+      playPromise.catch(() => {
+        patchCurrentState(prev => ({ ...prev, playing: false }))
+      })
     }
-  }, [player.url, player.token])
+
+    return () => {
+      audioEl.removeEventListener('loadedmetadata', onLoadedMetadata)
+      audioEl.removeEventListener('timeupdate', onTimeUpdate)
+      audioEl.removeEventListener('play', onPlay)
+      audioEl.removeEventListener('pause', onPause)
+      audioEl.removeEventListener('ended', onEnded)
+      audioEl.removeEventListener('error', onError)
+    }
+  }, [player.fileName, player.url, player.token])
 
   function renderActions(file, busy, noteBusy, noteCancelBusy, noteJob) {
     const fileUrl = `/api/files/${encodeURIComponent(file.name)}`
@@ -490,9 +739,6 @@ export default function FileManagerClient({ origin, initialFiles }) {
           </>
         ) : (
           <a href={fileUrl} download style={linkStyle} className="file-action-link">下载</a>
-        )}
-        {isPlayableExt(file.ext) && (
-          <button style={actionBtnStyle} className="file-action-btn" onClick={() => play(fileUrl, file.name)}>播放</button>
         )}
         {canGenerateNote && (
           <button
@@ -585,21 +831,13 @@ export default function FileManagerClient({ origin, initialFiles }) {
           OPUS归档 ({grouped.opusArchive.length})
         </button>
       </div>
-
-      {player.url && (
-        <div style={playerCardStyle}>
-          <div style={{ fontSize: 13, marginBottom: 8, color: '#444' }}>正在播放: {player.label}</div>
-          <audio
-            key={`${player.url}#${player.token}`}
-            ref={audioRef}
-            controls
-            autoPlay
-            preload="metadata"
-            src={player.url}
-            style={{ width: '100%' }}
-          />
-        </div>
-      )}
+      <audio
+        key={`${player.url}#${player.token}`}
+        ref={audioRef}
+        preload="metadata"
+        src={player.url || undefined}
+        style={{ display: 'none' }}
+      />
 
       {message && (
         <div style={messageStyle}>{message}</div>
@@ -620,7 +858,9 @@ export default function FileManagerClient({ origin, initialFiles }) {
           <table style={tableStyle}>
             <thead>
               <tr style={{ background: '#fafafa' }}>
+                <th style={headerStyle}>播放</th>
                 <th style={headerStyle}>标题</th>
+                <th style={headerStyle}>时长</th>
                 <th style={headerStyle}>大小</th>
                 <th style={headerStyle}>上传时间</th>
                 <th style={headerStyle}>操作</th>
@@ -636,14 +876,40 @@ export default function FileManagerClient({ origin, initialFiles }) {
                 const noteJob = inMemoryNoteJob || persistedNoteJob
                 const noteCancelBusy = !!noteCancelBusyMap[file.name]
                 const noteBusy = !!noteBusyMap[file.name] || noteCancelBusy || isMeetingJobRunning(noteJob)
-                return (
-                  <tr key={file.name} style={{ borderBottom: '1px solid #eee' }}>
+                const canPlay = isPlayableExt(file.ext)
+                const isCurrentFile = String(player.fileName || '') === String(file.name || '')
+                const rowDuration = toDurationSeconds(file.durationSec) || toDurationSeconds(durationFallbackMap[file.name])
+                const panelDuration = toDurationSeconds(player.duration) || rowDuration
+                const panelCurrent = isCurrentFile ? Math.max(0, Number(player.currentTime) || 0) : 0
+                const maxSeek = panelDuration > 0 ? panelDuration : 1
+                const isPlayingCurrent = isCurrentFile && player.playing
+                const playIconSrc = isPlayingCurrent ? '/icons/zanting.svg' : '/icons/bofang.svg'
+                const playLabel = isPlayingCurrent ? '暂停' : '播放'
+
+                return [
+                  <tr key={`${file.name}__main`} style={{ borderBottom: isCurrentFile ? 'none' : '1px solid #eee' }}>
+                    <td style={playCellStyle}>
+                      {canPlay ? (
+                        <button
+                          style={playBtnStyle}
+                          className="file-action-btn"
+                          onClick={() => togglePlay(file)}
+                          aria-label={playLabel}
+                          title={playLabel}
+                        >
+                          <img src={playIconSrc} alt={playLabel} style={playIconStyle} />
+                        </button>
+                      ) : (
+                        <span style={nonPlayableHintStyle}>-</span>
+                      )}
+                    </td>
                     <td style={fileNameCellStyle}>
                       <div style={fileTitleStyle}>{getDisplayTitle(file)}</div>
                       {String(file.latestNoteTitle || '').trim() && (
                         <div style={fileNameSubtleStyle}>{file.name}</div>
                       )}
                     </td>
+                    <td style={durationCellStyle}>{formatDuration(rowDuration)}</td>
                     <td style={cellStyle}>{file.sizeFormatted}</td>
                     <td style={cellStyle}>{formatDate(file.createdAt)}</td>
                     <td style={cellStyle}>
@@ -651,8 +917,35 @@ export default function FileManagerClient({ origin, initialFiles }) {
                         {renderActions(file, busy, noteBusy, noteCancelBusy, noteJob)}
                       </div>
                     </td>
-                  </tr>
-                )
+                  </tr>,
+                  isCurrentFile ? (
+                    <tr key={`${file.name}__progress`} style={{ borderBottom: '1px solid #eee' }}>
+                      <td colSpan={6} style={progressRowCellStyle}>
+                        <div style={progressPanelStyle}>
+                          <div style={progressMetaRowStyle}>
+                            <span style={progressTimeTextStyle}>
+                              {formatDuration(panelCurrent)} / {formatDuration(panelDuration)}
+                            </span>
+                            <span style={progressStatusTextStyle}>
+                              {player.error ? player.error : (player.playing ? '播放中' : '已暂停')}
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={maxSeek}
+                            step={1}
+                            value={Math.max(0, Math.min(panelCurrent, maxSeek))}
+                            onChange={(event) => {
+                              seekCurrentPlayback(file.name, event.target.value)
+                            }}
+                            style={progressRangeStyle}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null
+                ]
               })}
             </tbody>
           </table>
@@ -687,7 +980,7 @@ const statusRowStyle = {
 
 const tableStyle = {
   width: '100%',
-  minWidth: 640,
+  minWidth: 760,
   borderCollapse: 'collapse',
   background: 'rgba(255,255,255,0.82)',
   borderRadius: 14,
@@ -720,8 +1013,22 @@ const cellStyle = {
 
 const fileNameCellStyle = {
   ...cellStyle,
-  maxWidth: 360,
+  maxWidth: 320,
   wordBreak: 'break-all'
+}
+
+const playCellStyle = {
+  ...cellStyle,
+  width: 92,
+  minWidth: 92
+}
+
+const durationCellStyle = {
+  ...cellStyle,
+  width: 88,
+  minWidth: 88,
+  whiteSpace: 'nowrap',
+  fontVariantNumeric: 'tabular-nums'
 }
 
 const fileTitleStyle = {
@@ -770,6 +1077,33 @@ const actionBtnStyle = {
   minHeight: 44,
   cursor: 'pointer',
   fontWeight: 700
+}
+
+const playBtnStyle = {
+  fontSize: 12,
+  border: '1px solid rgba(23, 88, 97, 0.35)',
+  background: 'linear-gradient(180deg, #ffffff 0%, #f3fbfd 100%)',
+  color: '#1f6674',
+  borderRadius: 999,
+  padding: 0,
+  width: 36,
+  height: 36,
+  cursor: 'pointer',
+  fontWeight: 700,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center'
+}
+
+const playIconStyle = {
+  width: 18,
+  height: 18,
+  display: 'block'
+}
+
+const nonPlayableHintStyle = {
+  fontSize: 12,
+  color: '#9aa9ad'
 }
 
 const deleteBtnStyle = {
@@ -850,13 +1184,41 @@ const emptyStyle = {
   border: '1px solid rgba(35, 71, 77, 0.12)'
 }
 
-const playerCardStyle = {
-  background: 'linear-gradient(132deg, rgba(10, 138, 132, 0.15), rgba(255,255,255,0.9))',
-  border: '1px solid rgba(10, 134, 126, 0.33)',
-  borderRadius: 12,
-  padding: 12,
-  marginBottom: 12,
-  boxShadow: '0 8px 20px rgba(28, 74, 78, 0.11)'
+const progressRowCellStyle = {
+  padding: '0 14px 12px 14px',
+  background: 'rgba(250, 252, 253, 0.9)'
+}
+
+const progressPanelStyle = {
+  border: '1px solid rgba(34, 92, 102, 0.16)',
+  borderRadius: 10,
+  padding: '10px 12px',
+  background: 'linear-gradient(180deg, #ffffff 0%, #f4fafb 100%)'
+}
+
+const progressMetaRowStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 8,
+  marginBottom: 8
+}
+
+const progressStatusTextStyle = {
+  fontSize: 12,
+  color: '#31555e',
+  fontWeight: 600
+}
+
+const progressTimeTextStyle = {
+  fontSize: 12,
+  color: '#51717a',
+  fontVariantNumeric: 'tabular-nums'
+}
+
+const progressRangeStyle = {
+  width: '100%',
+  marginTop: 8
 }
 
 const messageStyle = {

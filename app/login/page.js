@@ -106,6 +106,8 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [recoveryToken, setRecoveryToken] = useState('')
   const [turnstileToken, setTurnstileToken] = useState('')
   const [busy, setBusy] = useState(false)
@@ -188,6 +190,8 @@ export default function LoginPage() {
     setMessage('')
     setPassword('')
     setConfirmPassword('')
+    setShowPassword(false)
+    setShowConfirmPassword(false)
     if (resolved !== MODE.reset) {
       setRecoveryToken('')
     }
@@ -405,32 +409,54 @@ export default function LoginPage() {
         {mode !== MODE.forgot && (
           <>
             <label className="ui-label">{mode === MODE.reset ? '新密码' : '密码'}</label>
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') submit()
-              }}
-              placeholder="至少 6 位"
-              className="ui-input"
-            />
+            <div style={passwordFieldWrapStyle}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') submit()
+                }}
+                placeholder="至少 6 位"
+                className="ui-input"
+                style={passwordInputStyle}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(value => !value)}
+                className="ui-btn ui-btn-secondary"
+                style={passwordToggleBtnStyle}
+              >
+                {showPassword ? '隐藏' : '显示'}
+              </button>
+            </div>
           </>
         )}
 
         {(mode === MODE.register || mode === MODE.reset) && (
           <>
             <label className="ui-label">确认密码</label>
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={e => setConfirmPassword(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') submit()
-              }}
-              placeholder="再次输入密码"
-              className="ui-input"
-            />
+            <div style={passwordFieldWrapStyle}>
+              <input
+                type={showConfirmPassword ? 'text' : 'password'}
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') submit()
+                }}
+                placeholder="再次输入密码"
+                className="ui-input"
+                style={passwordInputStyle}
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword(value => !value)}
+                className="ui-btn ui-btn-secondary"
+                style={passwordToggleBtnStyle}
+              >
+                {showConfirmPassword ? '隐藏' : '显示'}
+              </button>
+            </div>
           </>
         )}
 
@@ -468,4 +494,23 @@ export default function LoginPage() {
       </section>
     </main>
   )
+}
+
+const passwordFieldWrapStyle = {
+  position: 'relative'
+}
+
+const passwordInputStyle = {
+  paddingRight: 86
+}
+
+const passwordToggleBtnStyle = {
+  position: 'absolute',
+  right: 8,
+  top: 8,
+  minHeight: 32,
+  height: 32,
+  padding: '0 12px',
+  fontSize: 12,
+  borderRadius: 10
 }

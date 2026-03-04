@@ -62,24 +62,6 @@ export default async function Home() {
       <section className="panel">
         <FileManagerClient origin={origin} initialFiles={files} />
       </section>
-
-      <section className="api-panel">
-        <h3>API 说明</h3>
-        <code>
-          POST /api/upload - 上传文件 (multipart/form-data, field: file)<br />
-          POST /api/upload-test - 测试上传接口 (JSON)<br />
-          POST /api/upload-chunk - 分片上传接口 (JSON, 自动转MP3)<br />
-          POST /api/convert-mp3 - Opus 转 MP3 (JSON: name)<br />
-          POST /api/meeting-notes/jobs - 创建会议纪要任务 (JSON: fileName)<br />
-          GET  /api/meeting-notes/jobs/&#123;id&#125; - 查询任务状态<br />
-          POST /api/meeting-notes/jobs/&#123;id&#125;/cancel - 取消纪要任务<br />
-          GET  /api/meeting-notes/&#123;id&#125; - 获取纪要 Markdown<br />
-          GET  /api/meeting-notes/&#123;id&#125;/asr - 获取 ASR 原文存档<br />
-          GET  /api/files - 获取文件列表(含分类字段)<br />
-          GET  /api/files/&#123;name&#125; - 下载/播放文件<br />
-          DELETE /api/files/&#123;name&#125; - 删除文件
-        </code>
-      </section>
     </main>
   )
 }

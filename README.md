@@ -166,6 +166,26 @@ target 说明：
 npm i opusscript
 ```
 
+### POST /api/meeting-notes/jobs
+
+创建会议纪要任务（JSON: `fileName`）。
+
+### GET /api/meeting-notes/jobs/{id}
+
+查询会议纪要任务状态。
+
+### POST /api/meeting-notes/jobs/{id}/cancel
+
+取消会议纪要任务。
+
+### GET /api/meeting-notes/{id}
+
+获取纪要 Markdown。
+
+### GET /api/meeting-notes/{id}/asr
+
+获取 ASR 原文存档。
+
 ### GET /api/files
 
 获取上传文件列表（包含 `category`，可用于区分 `recording` 与 `test`）。

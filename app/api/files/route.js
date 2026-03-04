@@ -1,10 +1,15 @@
 import { promises as fs } from 'fs'
 import { extname, join } from 'path'
 import { requireSiteAuth } from '../_lib/admin-auth'
+import {
+  createSupabaseServiceClient,
+  getSupabaseServiceConfigError
+} from '../_lib/supabase-client'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const NOTES_DIR = join(UPLOAD_DIR, 'meeting_notes')
 const JOBS_DIR = join(NOTES_DIR, 'jobs')
+const RECORDINGS_TABLE = 'recorder_recordings'
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET,OPTIONS',
@@ -137,6 +142,58 @@ async function loadLatestMeetingJobMap() {
   return byFileName
 }
 
+function parseTs(value) {
+  const ts = new Date(String(value || '')).getTime()
+  if (!Number.isFinite(ts) || ts <= 0) return 0
+  return ts
+}
+
+async function loadLatestDurationMap(fileNames) {
+  const result = new Map()
+  const list = Array.from(new Set(
+    (Array.isArray(fileNames) ? fileNames : [])
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+  ))
+  if (list.length === 0) return result
+  if (getSupabaseServiceConfigError()) return result
+
+  try {
+    const client = createSupabaseServiceClient()
+    const batchSize = 200
+    const latestByName = new Map()
+    for (let i = 0; i < list.length; i += batchSize) {
+      const chunk = list.slice(i, i + batchSize)
+      const { data, error } = await client
+        .from(RECORDINGS_TABLE)
+        .select('file_name,duration_sec,uploaded_at,created_at')
+        .in('file_name', chunk)
+
+      if (error) {
+        throw new Error(String(error.message || '读取录音时长失败'))
+      }
+
+      for (const row of Array.isArray(data) ? data : []) {
+        const fileName = String(row?.file_name || '').trim()
+        if (!fileName) continue
+        const ts = parseTs(row?.uploaded_at) || parseTs(row?.created_at)
+        const durationSec = Math.max(0, Number(row?.duration_sec) || 0)
+        const prev = latestByName.get(fileName)
+        if (!prev || ts >= prev.ts) {
+          latestByName.set(fileName, { ts, durationSec })
+        }
+      }
+    }
+    for (const [fileName, value] of latestByName.entries()) {
+      result.set(fileName, Number(value?.durationSec) || 0)
+    }
+    return result
+  } catch (error) {
+    console.warn('[files] load duration map failed:', String(error?.message || error))
+    return result
+  }
+}
+
 export async function GET(request) {
   const auth = await requireSiteAuth(request)
   if (!auth.ok) {
@@ -151,6 +208,7 @@ export async function GET(request) {
     const visibleFiles = files.filter(name => !name.startsWith('.'))
     const latestNoteMap = await loadLatestNoteMap()
     const latestMeetingJobMap = await loadLatestMeetingJobMap()
+    const latestDurationMap = await loadLatestDurationMap(visibleFiles)
 
     const fileList = await Promise.all(
       visibleFiles
@@ -174,6 +232,7 @@ export async function GET(request) {
             latestNoteUrl: latestNote ? latestNote.noteUrl : '',
             latestNoteCreatedAt: latestNote ? latestNote.createdAt : 0,
             latestNoteTitle: latestNote ? String(latestNote.noteTitle || '') : '',
+            durationSec: Number(latestDurationMap.get(name) || 0),
             latestMeetingJob
           }
         })
