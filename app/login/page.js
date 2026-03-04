@@ -89,6 +89,12 @@ function humanizeAuthError(raw) {
   if (lowered.includes('rate limit') || lowered.includes('too many')) {
     return '请求太频繁了，请稍后再试。'
   }
+  if (lowered.includes('email rate limit exceeded')) {
+    return '邮件发送过于频繁，请稍后再试。若你已配置 Brevo，请检查 Supabase Custom SMTP 是否启用。'
+  }
+  if (lowered.includes('smtp')) {
+    return '邮件服务暂时不可用，请稍后重试。'
+  }
   if (lowered.includes('captcha') || lowered.includes('turnstile')) {
     return '人机验证失败，请刷新后重试。'
   }

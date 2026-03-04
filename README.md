@@ -10,6 +10,29 @@ cd web_server
 npm install
 ```
 
+### 1.1 环境变量（含 Supabase Auth）
+
+```bash
+cp .env.example .env.local
+```
+
+至少要填写以下变量后再启动：
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`（或 `SUPABASE_PUBLISHABLE_KEY`）
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+配对码默认有效期为 `1小时`（`PAIR_CODE_TTL_SEC=3600`），可按需在 `.env.local` 调整。
+
+邮箱注册/找回由 **Supabase Auth** 完成。  
+如果你要用 Brevo 提升邮件频率，请在 Supabase 控制台配置 **Auth -> SMTP -> Enable custom SMTP**：
+- Host: `smtp-relay.brevo.com`
+- Port: `587`
+- Username: `BREVO_SMTP_LOGIN`
+- Password: `BREVO_SMTP_KEY`
+- Sender: `BREVO_SMTP_SENDER_EMAIL` / `BREVO_SMTP_SENDER_NAME`
+
+说明：`BREVO_*` 变量是便于团队统一记录配置，不会被 `web_server` 直接读取发信。
+
 ### 2. 开发模式（前台）
 
 ```bash

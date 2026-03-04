@@ -488,6 +488,110 @@ export async function issueDeviceSessionByPairCode(deviceIdentity, pairCode) {
   }
 }
 
+export async function getDeviceSessionStatus(deviceIdentity, sessionToken) {
+  const identity = normalizeDeviceIdentity(deviceIdentity)
+  const token = String(sessionToken || '').trim()
+  if (!identity) throw new Error('设备标识不能为空')
+  if (!token) throw new Error('设备会话 token 不能为空')
+
+  const client = createSupabaseServiceClient()
+  const { data: deviceRows, error: deviceError } = await client
+    .from(TABLE.devices)
+    .select('*')
+    .eq('device_identity', identity)
+    .limit(1)
+  if (deviceError) throw new Error(String(deviceError.message || '读取设备失败'))
+  const device = firstRow(deviceRows)
+  if (!device) {
+    return {
+      active: false,
+      status: 'device_missing'
+    }
+  }
+
+  const { data: sessionRows, error: sessionError } = await client
+    .from(TABLE.deviceSessions)
+    .select('*')
+    .eq('device_id', device.id)
+    .eq('session_token', token)
+    .order('created_at', { ascending: false })
+    .limit(1)
+  if (sessionError) throw new Error(String(sessionError.message || '读取设备会话失败'))
+  const session = firstRow(sessionRows)
+  if (!session) {
+    return {
+      active: false,
+      status: 'session_invalid',
+      device
+    }
+  }
+
+  const status = normalizeStatus(session.status, '')
+  if (status !== 'active') {
+    return {
+      active: false,
+      status: status === 'revoked' ? 'unbound' : ('session_' + (status || 'inactive')),
+      device,
+      sessionExpiresAt: String(session.expires_at || '')
+    }
+  }
+
+  if (isExpired(session.expires_at)) {
+    await client
+      .from(TABLE.deviceSessions)
+      .update({ status: 'expired', updated_at: nowIso() })
+      .eq('id', session.id)
+      .eq('status', 'active')
+    return {
+      active: false,
+      status: 'session_expired',
+      device,
+      sessionExpiresAt: String(session.expires_at || '')
+    }
+  }
+
+  const sessionUserId = String(session.user_id || '').trim()
+  if (!sessionUserId) {
+    return {
+      active: false,
+      status: 'session_invalid',
+      device,
+      sessionExpiresAt: String(session.expires_at || '')
+    }
+  }
+
+  const { data: bindRows, error: bindError } = await client
+    .from(TABLE.userDevices)
+    .select('id')
+    .eq('device_id', device.id)
+    .eq('user_id', sessionUserId)
+    .eq('status', 'active')
+    .limit(1)
+  if (bindError) throw new Error(String(bindError.message || '读取设备绑定关系失败'))
+  if (!firstRow(bindRows)) {
+    return {
+      active: false,
+      status: 'unbound',
+      device,
+      sessionExpiresAt: String(session.expires_at || '')
+    }
+  }
+
+  const now = nowIso()
+  await client
+    .from(TABLE.deviceSessions)
+    .update({ last_seen_at: now, updated_at: now })
+    .eq('id', session.id)
+
+  return {
+    active: true,
+    status: 'active',
+    device,
+    userId: sessionUserId,
+    sessionExpiresAt: String(session.expires_at || '')
+  }
+}
+
 export async function validateDeviceSessionForUpload(deviceIdentity, sessionToken) {
   const identity = normalizeDeviceIdentity(deviceIdentity)
   const token = String(sessionToken || '').trim()

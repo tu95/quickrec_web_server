@@ -20,7 +20,7 @@ create table if not exists public.recorder_pair_codes (
   status text not null default 'pending',
   expires_at timestamptz not null,
   used_at timestamptz,
-  used_by_user_id uuid references auth.users(id),
+  used_by_user_id uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -90,6 +90,11 @@ where t.id in (
 create unique index if not exists uq_recorder_pair_codes_pending_device
   on public.recorder_pair_codes(device_id)
   where status = 'pending';
+alter table public.recorder_pair_codes
+  drop constraint if exists recorder_pair_codes_used_by_user_id_fkey;
+alter table public.recorder_pair_codes
+  add constraint recorder_pair_codes_used_by_user_id_fkey
+  foreign key (used_by_user_id) references auth.users(id) on delete set null;
 create index if not exists idx_recorder_user_devices_user on public.recorder_user_devices(user_id);
 create unique index if not exists uq_recorder_user_devices_active_device
   on public.recorder_user_devices(device_id)
@@ -107,37 +112,37 @@ drop policy if exists "user can read own devices" on public.recorder_user_device
 create policy "user can read own devices"
   on public.recorder_user_devices
   for select
-  using (auth.uid() = user_id);
+  using ((select auth.uid()) = user_id);
 
 drop policy if exists "user can read own recordings" on public.recorder_recordings;
 create policy "user can read own recordings"
   on public.recorder_recordings
   for select
-  using (auth.uid() = user_id);
+  using ((select auth.uid()) = user_id);
 
 -- Optional: allow users to update status in future extension
 drop policy if exists "user can update own recordings" on public.recorder_recordings;
 create policy "user can update own recordings"
   on public.recorder_recordings
   for update
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
 
 drop policy if exists "user can read own configs" on public.recorder_user_configs;
 create policy "user can read own configs"
   on public.recorder_user_configs
   for select
-  using (auth.uid() = user_id);
+  using ((select auth.uid()) = user_id);
 
 drop policy if exists "user can insert own configs" on public.recorder_user_configs;
 create policy "user can insert own configs"
   on public.recorder_user_configs
   for insert
-  with check (auth.uid() = user_id);
+  with check ((select auth.uid()) = user_id);
 
 drop policy if exists "user can update own configs" on public.recorder_user_configs;
 create policy "user can update own configs"
   on public.recorder_user_configs
   for update
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);

@@ -1,5 +1,6 @@
 import { buildUserSessionCookies, registerWithPassword } from '../../_lib/user-auth'
 import { buildAuthSecurityBlockResponse } from '../../_lib/auth-security'
+import { normalizeAuthApiError } from '../../_lib/auth-error-map'
 
 function createHeadersWithCookies(cookies) {
   const headers = new Headers()
@@ -16,12 +17,6 @@ function toUserView(user) {
     email: String(user?.email || ''),
     createdAt: String(user?.created_at || '')
   }
-}
-
-function resolveErrorStatus(errorText) {
-  const text = String(errorText || '').toLowerCase()
-  if (text.includes('rate limit') || text.includes('too many')) return 429
-  return 400
 }
 
 export async function POST(request) {
@@ -62,10 +57,10 @@ export async function POST(request) {
       headers ? { headers } : undefined
     )
   } catch (error) {
-    const message = String(error?.message || error)
+    const normalized = normalizeAuthApiError(error?.message || error, 'register')
     return Response.json(
-      { success: false, error: message },
-      { status: resolveErrorStatus(message) }
+      { success: false, error: normalized.error },
+      { status: normalized.status }
     )
   }
 }

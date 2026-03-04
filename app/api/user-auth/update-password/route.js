@@ -1,4 +1,5 @@
 import { requireUserAuth, updatePasswordWithAccessToken } from '../../_lib/user-auth'
+import { normalizeAuthApiError } from '../../_lib/auth-error-map'
 
 export async function POST(request) {
   const auth = await requireUserAuth(request)
@@ -27,9 +28,10 @@ export async function POST(request) {
     await updatePasswordWithAccessToken(auth.accessToken, password)
     return Response.json({ success: true })
   } catch (error) {
+    const normalized = normalizeAuthApiError(error?.message || error, 'updatePassword')
     return Response.json(
-      { success: false, error: String(error?.message || error) },
-      { status: 400 }
+      { success: false, error: normalized.error },
+      { status: normalized.status }
     )
   }
 }

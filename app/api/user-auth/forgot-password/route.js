@@ -1,5 +1,6 @@
 import { sendPasswordResetEmail } from '../../_lib/user-auth'
 import { buildAuthSecurityBlockResponse } from '../../_lib/auth-security'
+import { normalizeAuthApiError } from '../../_lib/auth-error-map'
 
 function getRequestOrigin(request) {
   const forwardedHost = request.headers.get('x-forwarded-host')
@@ -13,12 +14,6 @@ function getRequestOrigin(request) {
     return `${proto}://${host}`
   }
   return new URL(request.url).origin
-}
-
-function resolveErrorStatus(errorText) {
-  const text = String(errorText || '').toLowerCase()
-  if (text.includes('rate limit') || text.includes('too many')) return 429
-  return 400
 }
 
 export async function POST(request) {
@@ -45,10 +40,10 @@ export async function POST(request) {
       message: '重置密码邮件已发送，请检查邮箱'
     })
   } catch (error) {
-    const message = String(error?.message || error)
+    const normalized = normalizeAuthApiError(error?.message || error, 'forgotPassword')
     return Response.json(
-      { success: false, error: message },
-      { status: resolveErrorStatus(message) }
+      { success: false, error: normalized.error },
+      { status: normalized.status }
     )
   }
 }
