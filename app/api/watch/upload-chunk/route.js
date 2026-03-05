@@ -19,6 +19,14 @@ const CORS_HEADERS = {
 }
 
 const MAX_UPLOAD_BYTES = 120 * 1024 * 1024
+const MAX_BATCH_UPLOAD_BYTES = (() => {
+  const value = Number(process.env.WATCH_UPLOAD_BATCH_MAX_BYTES || 1024 * 1024)
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 1024 * 1024
+})()
+const MAX_BATCH_CHUNKS = (() => {
+  const value = Number(process.env.WATCH_UPLOAD_BATCH_MAX_CHUNKS || 16)
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 16
+})()
 const UPLOAD_SESSION_STALE_MS = 25 * 60 * 1000
 const ASYNC_UPLOAD_MAX_RETRIES = 3
 const ASYNC_UPLOAD_RETRY_DELAY_MS = 1200
@@ -115,24 +123,58 @@ function decodeBase64Chunk(data) {
 function parseRequestBody(body) {
   const uploadId = String(body?.uploadId || '').trim()
   const fileName = safeFileName(body?.fileName)
-  const index = Number(body?.index)
   const total = Number(body?.total)
   const size = Number(body?.size) || 0
 
   if (!uploadId) throw new Error('uploadId 不能为空')
-  if (!Number.isInteger(index) || index < 0) throw new Error('index 无效')
   if (!Number.isInteger(total) || total <= 0) throw new Error('total 无效')
-  if (index >= total) throw new Error('index 越界')
   if (size > MAX_UPLOAD_BYTES) {
     throw new Error(`文件过大，最大 ${Math.floor(MAX_UPLOAD_BYTES / 1024 / 1024)}MB`)
   }
 
+  const chunkList = []
+  const chunksBody = Array.isArray(body?.chunks) ? body.chunks : null
+  if (chunksBody && chunksBody.length > 0) {
+    if (chunksBody.length > MAX_BATCH_CHUNKS) {
+      throw new Error(`单次批量分片过多，最大 ${MAX_BATCH_CHUNKS}`)
+    }
+    let batchBytes = 0
+    for (let i = 0; i < chunksBody.length; i += 1) {
+      const item = chunksBody[i] || {}
+      const index = Number(item?.index)
+      if (!Number.isInteger(index) || index < 0) throw new Error('chunks.index 无效')
+      if (index >= total) throw new Error('chunks.index 越界')
+      const buffer = decodeBase64Chunk(item?.data)
+      batchBytes += buffer.length
+      if (batchBytes > MAX_BATCH_UPLOAD_BYTES) {
+        throw new Error(`单次批量数据过大，最大 ${Math.floor(MAX_BATCH_UPLOAD_BYTES / 1024)}KB`)
+      }
+      chunkList.push({ index, buffer })
+    }
+  } else {
+    const index = Number(body?.index)
+    if (!Number.isInteger(index) || index < 0) throw new Error('index 无效')
+    if (index >= total) throw new Error('index 越界')
+    const buffer = decodeBase64Chunk(body?.data)
+    chunkList.push({ index, buffer })
+  }
+  chunkList.sort((a, b) => a.index - b.index)
+  for (let i = 1; i < chunkList.length; i += 1) {
+    if (chunkList[i].index !== chunkList[i - 1].index + 1) {
+      throw new Error('chunks.index 必须连续递增')
+    }
+  }
+  const firstIndex = Number(chunkList[0]?.index || 0)
+  const lastIndex = Number(chunkList[chunkList.length - 1]?.index || firstIndex)
+
   return {
     uploadId,
     fileName,
-    index,
     total,
-    size
+    size,
+    chunks: chunkList,
+    firstIndex,
+    lastIndex
   }
 }
 
@@ -328,6 +370,18 @@ function makeClientError(errorText) {
   )
 }
 
+function makeSequenceConflictError(expectedNext) {
+  const next = Number(expectedNext)
+  return Response.json(
+    {
+      success: false,
+      error: `分片顺序错误，期望 index=${next}`,
+      expectedNext: Number.isInteger(next) ? next : 0
+    },
+    { status: 409, headers: withCorsHeaders() }
+  )
+}
+
 function makeAuthError(errorText) {
   return Response.json(
     { success: false, error: String(errorText || '鉴权失败') },
@@ -354,10 +408,8 @@ export async function POST(request) {
       return makeClientError('payload 无效')
     }
 
-    let chunkBuffer
     try {
       parsed = parseRequestBody(body)
-      chunkBuffer = decodeBase64Chunk(body.data)
     } catch (clientError) {
       return makeClientError(String(clientError?.message || clientError))
     }
@@ -385,7 +437,7 @@ export async function POST(request) {
 
     let session = uploadSessionMap.get(cacheKey)
     if (!session) {
-      if (parsed.index !== 0) {
+      if (parsed.firstIndex !== 0) {
         return makeClientError('缺少初始分片，请从第1片重新上传')
       }
       session = {
@@ -426,29 +478,36 @@ export async function POST(request) {
       await cleanupTmpPart(partPath)
       return makeClientError('fileName 与历史分片不一致')
     }
-    if (parsed.index !== session.nextIndex) {
-      return makeClientError(`分片顺序错误，期望 index=${session.nextIndex}`)
+    if (parsed.firstIndex !== session.nextIndex) {
+      return makeSequenceConflictError(session.nextIndex)
     }
 
-    const nextBytes = Number(session.receivedBytes || 0) + chunkBuffer.length
+    let incomingBytes = 0
+    for (const part of parsed.chunks) {
+      incomingBytes += Number(part?.buffer?.length || 0)
+    }
+    const nextBytes = Number(session.receivedBytes || 0) + incomingBytes
     if (nextBytes > MAX_UPLOAD_BYTES) {
       uploadSessionMap.delete(cacheKey)
       await cleanupTmpPart(partPath)
       return makeClientError(`文件过大，最大 ${Math.floor(MAX_UPLOAD_BYTES / 1024 / 1024)}MB`)
     }
 
-    await fs.appendFile(partPath, chunkBuffer)
+    for (const part of parsed.chunks) {
+      await fs.appendFile(partPath, part.buffer)
+    }
 
     session.receivedBytes = nextBytes
-    session.nextIndex = session.nextIndex + 1
+    session.nextIndex = parsed.lastIndex + 1
     session.updatedAt = nowMs()
 
-    if (parsed.index < parsed.total - 1) {
+    if (parsed.lastIndex < parsed.total - 1) {
       return Response.json(
         {
           success: true,
           done: false,
-          next: parsed.index + 1
+          next: session.nextIndex,
+          acceptedCount: parsed.chunks.length
         },
         { headers: withCorsHeaders() }
       )

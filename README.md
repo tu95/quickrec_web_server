@@ -22,6 +22,9 @@ cp .env.example .env.local
 - `SUPABASE_SERVICE_ROLE_KEY`
 
 配对码默认有效期为 `1小时`（`PAIR_CODE_TTL_SEC=3600`），可按需在 `.env.local` 调整。
+手机到服务端分片上传支持批量模式，默认每次请求 `1024KB`：
+- `WATCH_UPLOAD_BATCH_MAX_BYTES=1048576`
+- `WATCH_UPLOAD_BATCH_MAX_CHUNKS=16`
 
 邮箱注册/找回由 **Supabase Auth** 完成。  
 如果你要用 Brevo 提升邮件频率，请在 Supabase 控制台配置 **Auth -> SMTP -> Enable custom SMTP**：
