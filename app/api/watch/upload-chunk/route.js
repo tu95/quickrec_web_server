@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs'
 import { basename, extname, join } from 'path'
 import { enqueueMp3Convert } from '../../_lib/mp3-queue'
+import { probeAudioDurationSec } from '../../_lib/audio-duration'
 import { readConfigForUser } from '../../_lib/config-store'
 import { uploadBufferToOss } from '../../_lib/oss-storage'
 import {
@@ -11,7 +12,6 @@ import { getSupabaseConfigError } from '../../_lib/supabase-client'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const TMP_DIR = join(process.cwd(), 'uploads_tmp')
-
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST,OPTIONS',
@@ -330,6 +330,17 @@ async function processAsyncUploadJob(job) {
   }
 
   const outputPath = join(UPLOAD_DIR, outputFileName)
+  let durationSec = 0
+  try {
+    durationSec = await probeAudioDurationSec(outputPath)
+  } catch (error) {
+    console.warn('[watch-upload-async] probe duration failed', {
+      jobId: String(job.id || ''),
+      fileName: outputFileName,
+      error: String(error?.message || error)
+    })
+  }
+
   const fileBuffer = await fs.readFile(outputPath)
   const objectFileName = buildObjectFileName(outputFileName)
   const config = await readConfigForUser(job.userId)
@@ -344,6 +355,7 @@ async function processAsyncUploadJob(job) {
     ossKey: String(uploaded.objectKey || ''),
     ossUrl: uploaded.url || uploaded.signedUrl || '',
     sizeBytes: fileBuffer.length,
+    durationSec,
     status: 'uploaded'
   })
 

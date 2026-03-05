@@ -69,7 +69,6 @@ function normalizeNoteViewUrl(rawUrl) {
 export default function FileManagerClient({ origin, initialFiles }) {
   const router = useRouter()
   const [files, setFiles] = useState(Array.isArray(initialFiles) ? initialFiles : [])
-  const [durationFallbackMap, setDurationFallbackMap] = useState({})
   const [activeTab, setActiveTab] = useState('recording')
   const [loading, setLoading] = useState(false)
   const [busyMap, setBusyMap] = useState({})
@@ -94,7 +93,6 @@ export default function FileManagerClient({ origin, initialFiles }) {
   const pollingJobsRef = useRef(new Map())
   const autoOpenJobIdsRef = useRef(new Set())
   const lastPollingErrorRef = useRef('')
-  const durationProbeInFlightRef = useRef(new Set())
   const meetingPollIntervalMs = 2500
 
   const grouped = useMemo(() => {
@@ -461,7 +459,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
       token: Date.now(),
       playing: true,
       currentTime: 0,
-      duration: toDurationSeconds(file.durationSec) || toDurationSeconds(durationFallbackMap[fileName]),
+      duration: toDurationSeconds(file.durationSec),
       error: ''
     })
   }
@@ -531,104 +529,6 @@ export default function FileManagerClient({ origin, initialFiles }) {
       stopMeetingPolling()
     }
   }, [])
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.Audio !== 'function') return
-    const fileNames = new Set()
-    for (const file of files) {
-      const name = String(file?.name || '').trim()
-      if (!name) continue
-      fileNames.add(name)
-    }
-
-    setDurationFallbackMap(prev => {
-      let changed = false
-      const next = { ...prev }
-      for (const key of Object.keys(next)) {
-        if (!fileNames.has(key)) {
-          delete next[key]
-          changed = true
-        }
-      }
-      return changed ? next : prev
-    })
-
-    const targets = []
-    for (const file of files) {
-      const fileName = String(file?.name || '').trim()
-      if (!fileName) continue
-      if (!isPlayableExt(file.ext)) continue
-      if (toDurationSeconds(file.durationSec) > 0) continue
-      if (toDurationSeconds(durationFallbackMap[fileName]) > 0) continue
-      if (durationProbeInFlightRef.current.has(fileName)) continue
-      targets.push(fileName)
-    }
-    if (targets.length === 0) return
-
-    let disposed = false
-    let index = 0
-    const workers = Math.min(3, targets.length)
-
-    const readDurationByName = (fileName) => new Promise(resolve => {
-      const audio = new window.Audio()
-      let finished = false
-      const complete = (seconds) => {
-        if (finished) return
-        finished = true
-        clearTimeout(timeoutId)
-        try {
-          audio.pause()
-        } catch {}
-        audio.removeEventListener('loadedmetadata', onLoaded)
-        audio.removeEventListener('error', onError)
-        try {
-          audio.src = ''
-          audio.load()
-        } catch {}
-        resolve(toDurationSeconds(seconds))
-      }
-      const onLoaded = () => complete(audio.duration)
-      const onError = () => complete(0)
-      const timeoutId = window.setTimeout(() => complete(0), 15000)
-      audio.preload = 'metadata'
-      audio.addEventListener('loadedmetadata', onLoaded, { once: true })
-      audio.addEventListener('error', onError, { once: true })
-      audio.src = `/api/files/${encodeURIComponent(fileName)}`
-      try {
-        audio.load()
-      } catch {
-        complete(0)
-      }
-    })
-
-    const runWorker = async () => {
-      while (!disposed) {
-        const targetIndex = index
-        index += 1
-        if (targetIndex >= targets.length) return
-        const fileName = targets[targetIndex]
-        durationProbeInFlightRef.current.add(fileName)
-        try {
-          const seconds = await readDurationByName(fileName)
-          if (disposed || seconds <= 0) continue
-          setDurationFallbackMap(prev => {
-            if (toDurationSeconds(prev[fileName]) > 0) return prev
-            return { ...prev, [fileName]: seconds }
-          })
-        } finally {
-          durationProbeInFlightRef.current.delete(fileName)
-        }
-      }
-    }
-
-    for (let i = 0; i < workers; i += 1) {
-      void runWorker()
-    }
-
-    return () => {
-      disposed = true
-    }
-  }, [files, durationFallbackMap])
 
   useEffect(() => {
     const fileName = String(player.fileName || '')
@@ -878,7 +778,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
                 const noteBusy = !!noteBusyMap[file.name] || noteCancelBusy || isMeetingJobRunning(noteJob)
                 const canPlay = isPlayableExt(file.ext)
                 const isCurrentFile = String(player.fileName || '') === String(file.name || '')
-                const rowDuration = toDurationSeconds(file.durationSec) || toDurationSeconds(durationFallbackMap[file.name])
+                const rowDuration = toDurationSeconds(file.durationSec)
                 const panelDuration = toDurationSeconds(player.duration) || rowDuration
                 const panelCurrent = isCurrentFile ? Math.max(0, Number(player.currentTime) || 0) : 0
                 const maxSeek = panelDuration > 0 ? panelDuration : 1

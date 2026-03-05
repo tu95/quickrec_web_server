@@ -10,6 +10,14 @@ const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const NOTES_DIR = join(UPLOAD_DIR, 'meeting_notes')
 const JOBS_DIR = join(NOTES_DIR, 'jobs')
 const RECORDINGS_TABLE = 'recorder_recordings'
+const MEETING_JOB_STALE_MS = (() => {
+  const fallback = 30 * 60 * 1000
+  const raw = Number(process.env.MEETING_JOB_STALE_MS || fallback)
+  if (!Number.isFinite(raw)) return fallback
+  const value = Math.floor(raw)
+  if (value < 60 * 1000) return 60 * 1000
+  return value
+})()
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET,OPTIONS',
@@ -57,6 +65,52 @@ function toClientMeetingJob(rawJob) {
     result: rawJob.result && typeof rawJob.result === 'object'
       ? rawJob.result
       : null
+  }
+}
+
+function normalizeJobStatus(status) {
+  return String(status || '').trim().toLowerCase()
+}
+
+function isLiveMeetingJobStatus(status) {
+  const normalized = normalizeJobStatus(status)
+  return normalized === 'queued' || normalized === 'running'
+}
+
+function getMeetingJobActivityTs(rawJob) {
+  const updatedAt = toNumber(rawJob?.updatedAt)
+  if (updatedAt > 0) return updatedAt
+  const createdAt = toNumber(rawJob?.createdAt)
+  if (createdAt > 0) return createdAt
+  return 0
+}
+
+function collapseStaleMeetingJob(rawJob) {
+  if (!rawJob || typeof rawJob !== 'object') {
+    return { job: rawJob, changed: false }
+  }
+  if (!isLiveMeetingJobStatus(rawJob.status)) {
+    return { job: rawJob, changed: false }
+  }
+  const activityTs = getMeetingJobActivityTs(rawJob)
+  if (!activityTs) {
+    return { job: rawJob, changed: false }
+  }
+  if ((Date.now() - activityTs) < MEETING_JOB_STALE_MS) {
+    return { job: rawJob, changed: false }
+  }
+  const now = Date.now()
+  const errorText = String(rawJob.error || '').trim() || '任务中断，请重试'
+  return {
+    job: {
+      ...rawJob,
+      status: 'failed',
+      stage: 'error',
+      error: errorText,
+      updatedAt: now,
+      failedAt: now
+    },
+    changed: true
   }
 }
 
@@ -117,6 +171,13 @@ async function loadLatestMeetingJobMap() {
         rawJob = JSON.parse(text)
       } catch {
         continue
+      }
+      const collapsed = collapseStaleMeetingJob(rawJob)
+      if (collapsed.changed) {
+        rawJob = collapsed.job
+        try {
+          await fs.writeFile(jobPath, JSON.stringify(rawJob, null, 2), 'utf8')
+        } catch {}
       }
 
       const job = toClientMeetingJob(rawJob)

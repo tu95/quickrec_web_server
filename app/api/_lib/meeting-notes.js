@@ -10,6 +10,14 @@ const NOTES_DIR = join(UPLOAD_DIR, 'meeting_notes')
 const JOBS_DIR = join(NOTES_DIR, 'jobs')
 const ASR_ARCHIVE_DIR = join(NOTES_DIR, 'asr')
 const TERMINAL_JOB_STATUS = new Set(['completed', 'failed', 'cancelled'])
+const MEETING_JOB_STALE_MS = (() => {
+  const fallback = 30 * 60 * 1000
+  const raw = Number(process.env.MEETING_JOB_STALE_MS || fallback)
+  if (!Number.isFinite(raw)) return fallback
+  const value = Math.floor(raw)
+  if (value < 60 * 1000) return 60 * 1000
+  return value
+})()
 
 const JOBS = new Map()
 
@@ -38,6 +46,43 @@ function normalizeJobStatus(status) {
 
 function isTerminalJobStatus(status) {
   return TERMINAL_JOB_STATUS.has(normalizeJobStatus(status))
+}
+
+function isLiveJobStatus(status) {
+  const normalized = normalizeJobStatus(status)
+  return normalized === 'queued' || normalized === 'running'
+}
+
+function getJobActivityTs(job) {
+  const updatedAt = Number(job?.updatedAt || 0)
+  if (Number.isFinite(updatedAt) && updatedAt > 0) return updatedAt
+  const createdAt = Number(job?.createdAt || 0)
+  if (Number.isFinite(createdAt) && createdAt > 0) return createdAt
+  return 0
+}
+
+function buildStaleFailedJob(job) {
+  const now = Date.now()
+  const errorText = String(job?.error || '').trim() || '任务中断，请重试'
+  return {
+    ...job,
+    status: 'failed',
+    stage: 'error',
+    error: errorText,
+    updatedAt: now,
+    failedAt: now
+  }
+}
+
+async function collapseStalePersistedJobIfNeeded(job) {
+  if (!job || typeof job !== 'object') return job
+  if (!isLiveJobStatus(job.status)) return job
+  const activityTs = getJobActivityTs(job)
+  if (!activityTs) return job
+  if ((Date.now() - activityTs) < MEETING_JOB_STALE_MS) return job
+  const next = buildStaleFailedJob(job)
+  await persistJob(next)
+  return next
 }
 
 function createJobCancelledError(message) {
@@ -131,9 +176,11 @@ async function getLatestJobState(jobId) {
   if (inMemory) return inMemory
   const stored = await readPersistedJob(safeJobId)
   if (stored) {
-    JOBS.set(safeJobId, stored)
+    const collapsed = await collapseStalePersistedJobIfNeeded(stored)
+    JOBS.set(safeJobId, collapsed)
+    return collapsed
   }
-  return stored
+  return null
 }
 
 async function ensureJobNotCancelled(jobOrId) {
