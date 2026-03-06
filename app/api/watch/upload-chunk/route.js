@@ -67,6 +67,17 @@ function buildObjectFileName(fileName) {
   return `${Date.now()}_${Math.floor(Math.random() * 1000000)}_${safe}`
 }
 
+function buildUploadSessionKey(userId, uploadId) {
+  const uid = String(userId || '').trim()
+  const upid = String(uploadId || '').trim()
+  return `${uid}:${upid}`
+}
+
+function toPartFileNameFromSessionKey(sessionKey) {
+  const safe = String(sessionKey || '').replace(/[^a-zA-Z0-9_-]/g, '_')
+  return `${safe}.part`
+}
+
 async function buildUniqueFileName(originalName) {
   const safeName = safeFileName(originalName)
   let filename = safeName
@@ -200,6 +211,7 @@ function snapshotAsyncJob(job) {
     deviceIdentity: String(job.deviceIdentity || ''),
     inputFileName: String(job.inputFileName || ''),
     outputFileName: String(job.outputFileName || ''),
+    recordingId: String(job.recordingId || ''),
     objectKey: String(job.objectKey || ''),
     url: String(job.url || ''),
     signedUrl: String(job.signedUrl || ''),
@@ -348,7 +360,7 @@ async function processAsyncUploadJob(job) {
     signedUrlExpiresSec: config?.aliyun?.oss?.asrSignedUrlExpiresSec
   })
 
-  await insertRecordingMetadata({
+  const recording = await insertRecordingMetadata({
     userId: String(job.userId || ''),
     deviceId: String(job.deviceDbId || ''),
     fileName: outputFileName,
@@ -359,6 +371,16 @@ async function processAsyncUploadJob(job) {
     status: 'uploaded'
   })
 
+  job.recordingId = String(recording?.id || '')
+
+  const cleanupPaths = new Set([outputPath])
+  if (localPath !== outputPath) cleanupPaths.add(localPath)
+  for (const path of cleanupPaths) {
+    try {
+      await fs.unlink(path)
+    } catch {}
+  }
+
   console.log('[watch-upload-async] success', {
     jobId: job.id,
     uploadId: job.uploadId,
@@ -367,6 +389,7 @@ async function processAsyncUploadJob(job) {
   })
 
   return {
+    recordingId: String(recording?.id || ''),
     outputFileName,
     objectKey: uploaded.objectKey || '',
     url: uploaded.url || uploaded.signedUrl || '',
@@ -402,6 +425,7 @@ function makeAuthError(errorText) {
 }
 
 export async function POST(request) {
+  let sessionCacheKey = ''
   const configError = getSupabaseConfigError()
   if (configError) {
     return Response.json(
@@ -442,10 +466,11 @@ export async function POST(request) {
       return makeAuthError(String(authError?.message || authError))
     }
 
-    const cacheKey = parsed.uploadId
-    const partPath = join(TMP_DIR, `${cacheKey}.part`)
     const userId = String(auth.userId || '')
     const deviceDbId = String(auth.device?.id || '')
+    const cacheKey = buildUploadSessionKey(userId, parsed.uploadId)
+    sessionCacheKey = cacheKey
+    const partPath = join(TMP_DIR, toPartFileNameFromSessionKey(cacheKey))
 
     let session = uploadSessionMap.get(cacheKey)
     if (!session) {
@@ -531,7 +556,7 @@ export async function POST(request) {
     uploadSessionMap.delete(cacheKey)
 
     const asyncJob = queueAsyncUploadJob({
-      uploadId: cacheKey,
+      uploadId: parsed.uploadId,
       userId,
       deviceDbId,
       deviceIdentity,
@@ -547,14 +572,14 @@ export async function POST(request) {
         queueJobId: asyncJob.id,
         fileName: finalFileName,
         size: session.receivedBytes,
-        url: `/api/files/${encodeURIComponent(finalFileName)}`
+        url: ''
       },
       { headers: withCorsHeaders() }
     )
   } catch (error) {
-    if (parsed && parsed.uploadId) {
-      const stale = uploadSessionMap.get(parsed.uploadId)
-      uploadSessionMap.delete(parsed.uploadId)
+    if (sessionCacheKey) {
+      const stale = uploadSessionMap.get(sessionCacheKey)
+      uploadSessionMap.delete(sessionCacheKey)
       if (stale && stale.partPath) {
         await cleanupTmpPart(stale.partPath)
       }

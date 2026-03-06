@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
 
 function formatDate(timestamp) {
   return new Date(timestamp).toLocaleString('zh-CN')
@@ -32,6 +31,10 @@ function getDisplayTitle(file) {
   const title = String(file?.latestNoteTitle || '').trim()
   if (title) return title
   return String(file?.name || '').trim()
+}
+
+function getFileKey(file) {
+  return String(file?.id || '').trim()
 }
 
 function isPlayableExt(ext) {
@@ -67,7 +70,6 @@ function normalizeNoteViewUrl(rawUrl) {
 }
 
 export default function FileManagerClient({ origin, initialFiles }) {
-  const router = useRouter()
   const [files, setFiles] = useState(Array.isArray(initialFiles) ? initialFiles : [])
   const [activeTab, setActiveTab] = useState('recording')
   const [loading, setLoading] = useState(false)
@@ -78,7 +80,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
   const [noteErrorLog, setNoteErrorLog] = useState('')
   const [message, setMessage] = useState('')
   const [player, setPlayer] = useState({
-    fileName: '',
+    fileId: '',
     url: '',
     label: '',
     token: 0,
@@ -94,6 +96,13 @@ export default function FileManagerClient({ origin, initialFiles }) {
   const autoOpenJobIdsRef = useRef(new Set())
   const lastPollingErrorRef = useRef('')
   const meetingPollIntervalMs = 2500
+
+  function navigateTo(url) {
+    const target = String(url || '').trim()
+    if (!target) return
+    if (typeof window === 'undefined' || !window.location) return
+    window.location.assign(target)
+  }
 
   const grouped = useMemo(() => {
     const recording = []
@@ -145,8 +154,8 @@ export default function FileManagerClient({ origin, initialFiles }) {
     }
   }
 
-  function removePollingJob(fileName, expectedJobId = '') {
-    const key = String(fileName || '')
+  function removePollingJob(fileId, expectedJobId = '') {
+    const key = String(fileId || '')
     if (!key) return
     if (!pollingJobsRef.current.has(key)) return
     const currentJobId = String(pollingJobsRef.current.get(key) || '')
@@ -157,8 +166,8 @@ export default function FileManagerClient({ origin, initialFiles }) {
     }
   }
 
-  function trackMeetingJob(fileName, job, options = null) {
-    const key = String(fileName || '')
+  function trackMeetingJob(fileId, job, options = null) {
+    const key = String(fileId || '')
     if (!key || !job || typeof job !== 'object') return
     const jobId = String(job.id || '')
     setNoteJobMap(prev => ({ ...prev, [key]: job }))
@@ -189,10 +198,10 @@ export default function FileManagerClient({ origin, initialFiles }) {
 
     pollInFlightRef.current = true
     try {
-      for (const [fileName, jobId] of entries) {
+      for (const [fileId, jobId] of entries) {
         const safeJobId = String(jobId || '')
         if (!safeJobId) {
-          removePollingJob(fileName)
+          removePollingJob(fileId)
           continue
         }
 
@@ -216,10 +225,10 @@ export default function FileManagerClient({ origin, initialFiles }) {
             (statusRes ? `HTTP ${statusRes.status}` : 'network error')
           )
           if (statusRes && statusRes.status === 404) {
-            removePollingJob(fileName, safeJobId)
+            removePollingJob(fileId, safeJobId)
             setNoteJobMap(prev => ({
               ...prev,
-              [fileName]: {
+              [fileId]: {
                 id: safeJobId,
                 status: 'failed',
                 stage: 'error',
@@ -237,13 +246,13 @@ export default function FileManagerClient({ origin, initialFiles }) {
 
         const job = statusData.job
         lastPollingErrorRef.current = ''
-        setNoteJobMap(prev => ({ ...prev, [fileName]: job }))
+        setNoteJobMap(prev => ({ ...prev, [fileId]: job }))
 
         if (isMeetingJobRunning(job)) {
           continue
         }
 
-        removePollingJob(fileName, safeJobId)
+        removePollingJob(fileId, safeJobId)
         const finishedJobId = String(job.id || safeJobId)
         const shouldAutoOpen = autoOpenJobIdsRef.current.has(finishedJobId)
         autoOpenJobIdsRef.current.delete(finishedJobId)
@@ -258,7 +267,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
                   window.location.assign(noteUrl)
                 }
               } else {
-                router.push(noteUrl)
+                navigateTo(noteUrl)
               }
             }
           }
@@ -296,16 +305,18 @@ export default function FileManagerClient({ origin, initialFiles }) {
     void pollMeetingJobsOnce()
   }
 
-  async function deleteFile(fileName) {
-    if (!fileName) return
+  async function deleteFile(file) {
+    const fileId = getFileKey(file)
+    const fileName = String(file?.name || '').trim()
+    if (!fileId) return
     if (typeof window !== 'undefined') {
       const ok = window.confirm(`确认删除文件: ${fileName} ?`)
       if (!ok) return
     }
-    setBusy(fileName, true)
+    setBusy(fileId, true)
     setMessage('')
     try {
-      const res = await fetch(`/api/files/${encodeURIComponent(fileName)}`, {
+      const res = await fetch(`/api/files/${encodeURIComponent(fileId)}`, {
         method: 'DELETE'
       })
       const data = await res.json()
@@ -314,18 +325,19 @@ export default function FileManagerClient({ origin, initialFiles }) {
       }
       const deletedText = Array.isArray(data.deleted) ? data.deleted.join(', ') : fileName
       setMessage(`已删除: ${deletedText}`)
-      removePollingJob(fileName)
+      removePollingJob(fileId)
       await refreshFiles()
     } catch (error) {
       setMessage(`删除失败: ${String(error.message || error)}`)
     } finally {
-      setBusy(fileName, false)
+      setBusy(fileId, false)
     }
   }
 
-  async function generateMeetingNote(fileName) {
-    if (!fileName) return
-    setNoteBusy(fileName, true)
+  async function generateMeetingNote(file) {
+    const fileId = getFileKey(file)
+    if (!fileId) return
+    setNoteBusy(fileId, true)
     setNoteErrorLog('')
     setMessage('')
     try {
@@ -334,13 +346,13 @@ export default function FileManagerClient({ origin, initialFiles }) {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ fileName })
+        body: JSON.stringify({ recordingId: fileId })
       })
       const createData = await createRes.json().catch(() => null)
       if (!createRes.ok || !createData || !createData.success || !createData.job) {
         throw new Error((createData && createData.error) ? createData.error : `HTTP ${createRes.status}`)
       }
-      trackMeetingJob(fileName, createData.job, { autoOpenOnComplete: true })
+      trackMeetingJob(fileId, createData.job, { autoOpenOnComplete: true })
       if (isMeetingJobRunning(createData.job)) {
         setMessage('纪要任务已创建，正在后台生成')
       } else if (getMeetingJobStatus(createData.job) === 'completed') {
@@ -351,14 +363,15 @@ export default function FileManagerClient({ origin, initialFiles }) {
       setMessage(`纪要生成失败: ${text}`)
       setNoteErrorLog(text)
     } finally {
-      setNoteBusy(fileName, false)
+      setNoteBusy(fileId, false)
     }
   }
 
-  async function cancelMeetingNote(fileName, noteJob) {
+  async function cancelMeetingNote(file, noteJob) {
+    const fileId = getFileKey(file)
     const jobId = String(noteJob?.id || '')
-    if (!fileName || !jobId) return
-    setNoteCancelBusy(fileName, true)
+    if (!fileId || !jobId) return
+    setNoteCancelBusy(fileId, true)
     setMessage('')
     try {
       const res = await fetch(`/api/meeting-notes/jobs/${encodeURIComponent(jobId)}/cancel`, {
@@ -368,14 +381,14 @@ export default function FileManagerClient({ origin, initialFiles }) {
       if (!res.ok || !data?.success || !data?.job) {
         throw new Error((data && data.error) ? data.error : `HTTP ${res.status}`)
       }
-      trackMeetingJob(fileName, data.job)
-      setNoteBusy(fileName, false)
+      trackMeetingJob(fileId, data.job)
+      setNoteBusy(fileId, false)
       setMessage('已取消纪要生成，可重新发起')
       await refreshFiles()
     } catch (error) {
       setMessage(`取消失败: ${String(error?.message || error)}`)
     } finally {
-      setNoteCancelBusy(fileName, false)
+      setNoteCancelBusy(fileId, false)
     }
   }
 
@@ -391,12 +404,14 @@ export default function FileManagerClient({ origin, initialFiles }) {
       }
       return
     }
-    router.push(normalizedUrl)
+    navigateTo(normalizedUrl)
   }
 
-  async function convertToMp3(fileName) {
-    if (!fileName) return
-    setBusy(fileName, true)
+  async function convertToMp3(file) {
+    const fileId = getFileKey(file)
+    const fileName = String(file?.name || '').trim()
+    if (!fileName || !fileId) return
+    setBusy(fileId, true)
     setMessage('')
     try {
       const res = await fetch('/api/convert-mp3', {
@@ -423,17 +438,17 @@ export default function FileManagerClient({ origin, initialFiles }) {
         window.alert(errorText)
       }
     } finally {
-      setBusy(fileName, false)
+      setBusy(fileId, false)
     }
   }
 
   function togglePlay(file) {
     if (!file || !isPlayableExt(file.ext)) return
-    const fileName = String(file.name || '')
-    if (!fileName) return
-    const url = `/api/files/${encodeURIComponent(fileName)}`
+    const fileId = getFileKey(file)
+    if (!fileId) return
+    const url = String(file.streamUrl || file.downloadUrl || '').trim() || `/api/files/${encodeURIComponent(fileId)}`
     const label = String(file.name || '')
-    const sameFile = String(player.fileName || '') === fileName && String(player.url || '') === url
+    const sameFile = String(player.fileId || '') === fileId
     const audioEl = audioRef.current
 
     if (sameFile && audioEl) {
@@ -453,7 +468,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
     }
 
     setPlayer({
-      fileName,
+      fileId,
       url,
       label,
       token: Date.now(),
@@ -464,9 +479,9 @@ export default function FileManagerClient({ origin, initialFiles }) {
     })
   }
 
-  function seekCurrentPlayback(fileName, nextTimeRaw) {
-    const currentFileName = String(player.fileName || '')
-    if (!currentFileName || currentFileName !== String(fileName || '')) return
+  function seekCurrentPlayback(fileId, nextTimeRaw) {
+    const currentFileId = String(player.fileId || '')
+    if (!currentFileId || currentFileId !== String(fileId || '')) return
     const audioEl = audioRef.current
     if (!audioEl || typeof audioEl.currentTime !== 'number') return
     const maxDur = toDurationSeconds(player.duration) || toDurationSeconds(audioEl.duration)
@@ -479,24 +494,25 @@ export default function FileManagerClient({ origin, initialFiles }) {
   }
 
   useEffect(() => {
-    const fileNames = new Set()
+    const fileIds = new Set()
     for (const file of files) {
-      if (!file || !file.name) continue
-      fileNames.add(file.name)
+      const fileId = getFileKey(file)
+      if (!fileId) continue
+      fileIds.add(fileId)
       const persistedNoteJob = file.latestMeetingJob && typeof file.latestMeetingJob === 'object'
         ? file.latestMeetingJob
         : null
       if (!persistedNoteJob || !persistedNoteJob.id) continue
       if (isMeetingJobRunning(persistedNoteJob)) {
-        pollingJobsRef.current.set(file.name, String(persistedNoteJob.id))
+        pollingJobsRef.current.set(fileId, String(persistedNoteJob.id))
       } else if (isMeetingJobTerminal(persistedNoteJob)) {
-        removePollingJob(file.name, String(persistedNoteJob.id))
+        removePollingJob(fileId, String(persistedNoteJob.id))
       }
     }
 
-    for (const [fileName] of Array.from(pollingJobsRef.current.entries())) {
-      if (!fileNames.has(fileName)) {
-        removePollingJob(fileName)
+    for (const [fileId] of Array.from(pollingJobsRef.current.entries())) {
+      if (!fileIds.has(fileId)) {
+        removePollingJob(fileId)
       }
     }
 
@@ -531,9 +547,9 @@ export default function FileManagerClient({ origin, initialFiles }) {
   }, [])
 
   useEffect(() => {
-    const fileName = String(player.fileName || '')
+    const fileId = String(player.fileId || '')
     const url = String(player.url || '')
-    if (!fileName || !url) return
+    if (!fileId || !url) return
     const audioEl = audioRef.current
     if (!audioEl || typeof audioEl.play !== 'function') return
     const activeToken = Number(player.token || 0)
@@ -541,7 +557,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
     function patchCurrentState(mutator) {
       setPlayer(prev => {
         if (
-          String(prev.fileName || '') !== fileName ||
+          String(prev.fileId || '') !== fileId ||
           String(prev.url || '') !== url ||
           Number(prev.token || 0) !== activeToken
         ) {
@@ -575,7 +591,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
     const onEnded = () => {
       patchCurrentState(prev => ({
         ...prev,
-        fileName: '',
+        fileId: '',
         url: '',
         label: '',
         token: Date.now(),
@@ -611,10 +627,11 @@ export default function FileManagerClient({ origin, initialFiles }) {
       audioEl.removeEventListener('ended', onEnded)
       audioEl.removeEventListener('error', onError)
     }
-  }, [player.fileName, player.url, player.token])
+  }, [player.fileId, player.url, player.token])
 
   function renderActions(file, busy, noteBusy, noteCancelBusy, noteJob) {
-    const fileUrl = `/api/files/${encodeURIComponent(file.name)}`
+    const fileId = getFileKey(file)
+    const fileUrl = String(file?.downloadUrl || file?.streamUrl || '').trim() || `/api/files/${encodeURIComponent(fileId)}`
     const isOpus = file.ext === '.opus'
     const canGenerateNote = isPlayableExt(file.ext) || isOpus
     const inMemoryNoteUrl = noteJob && noteJob.result && noteJob.result.noteUrl ? String(noteJob.result.noteUrl) : ''
@@ -630,7 +647,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
             <button
               style={actionBtnStyle}
               className="file-action-btn"
-              onClick={() => convertToMp3(file.name)}
+              onClick={() => convertToMp3(file)}
               disabled={busy}
             >
               {busy ? '转换中...' : '转换到MP3'}
@@ -644,7 +661,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
           <button
             style={noteBtnStyle}
             className="file-action-btn"
-            onClick={() => generateMeetingNote(file.name)}
+            onClick={() => generateMeetingNote(file)}
             disabled={noteBusy || noteCancelBusy}
           >
             {noteBusy ? '纪要生成中...' : '一键生成会议纪要'}
@@ -654,7 +671,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
           <button
             style={cancelNoteBtnStyle}
             className="file-action-btn"
-            onClick={() => cancelMeetingNote(file.name, noteJob)}
+            onClick={() => cancelMeetingNote(file, noteJob)}
             disabled={noteCancelBusy}
           >
             {noteCancelBusy ? '取消中...' : '取消生成纪要'}
@@ -672,7 +689,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
         <button
           style={deleteBtnStyle}
           className="file-delete-btn"
-          onClick={() => deleteFile(file.name)}
+          onClick={() => deleteFile(file)}
           disabled={busy}
         >
           删除
@@ -768,16 +785,18 @@ export default function FileManagerClient({ origin, initialFiles }) {
             </thead>
             <tbody>
               {list.map((file) => {
-                const busy = !!busyMap[file.name]
-                const inMemoryNoteJob = noteJobMap[file.name] || null
+                const fileId = getFileKey(file)
+                if (!fileId) return null
+                const busy = !!busyMap[fileId]
+                const inMemoryNoteJob = noteJobMap[fileId] || null
                 const persistedNoteJob = file && file.latestMeetingJob && typeof file.latestMeetingJob === 'object'
                   ? file.latestMeetingJob
                   : null
                 const noteJob = inMemoryNoteJob || persistedNoteJob
-                const noteCancelBusy = !!noteCancelBusyMap[file.name]
-                const noteBusy = !!noteBusyMap[file.name] || noteCancelBusy || isMeetingJobRunning(noteJob)
+                const noteCancelBusy = !!noteCancelBusyMap[fileId]
+                const noteBusy = !!noteBusyMap[fileId] || noteCancelBusy || isMeetingJobRunning(noteJob)
                 const canPlay = isPlayableExt(file.ext)
-                const isCurrentFile = String(player.fileName || '') === String(file.name || '')
+                const isCurrentFile = String(player.fileId || '') === fileId
                 const rowDuration = toDurationSeconds(file.durationSec)
                 const panelDuration = toDurationSeconds(player.duration) || rowDuration
                 const panelCurrent = isCurrentFile ? Math.max(0, Number(player.currentTime) || 0) : 0
@@ -787,7 +806,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
                 const playLabel = isPlayingCurrent ? '暂停' : '播放'
 
                 return [
-                  <tr key={`${file.name}__main`} style={{ borderBottom: isCurrentFile ? 'none' : '1px solid #eee' }}>
+                  <tr key={`${fileId}__main`} style={{ borderBottom: isCurrentFile ? 'none' : '1px solid #eee' }}>
                     <td style={playCellStyle}>
                       {canPlay ? (
                         <button
@@ -819,7 +838,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
                     </td>
                   </tr>,
                   isCurrentFile ? (
-                    <tr key={`${file.name}__progress`} style={{ borderBottom: '1px solid #eee' }}>
+                    <tr key={`${fileId}__progress`} style={{ borderBottom: '1px solid #eee' }}>
                       <td colSpan={6} style={progressRowCellStyle}>
                         <div style={progressPanelStyle}>
                           <div style={progressMetaRowStyle}>
@@ -837,7 +856,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
                             step={1}
                             value={Math.max(0, Math.min(panelCurrent, maxSeek))}
                             onChange={(event) => {
-                              seekCurrentPlayback(file.name, event.target.value)
+                              seekCurrentPlayback(fileId, event.target.value)
                             }}
                             style={progressRangeStyle}
                           />

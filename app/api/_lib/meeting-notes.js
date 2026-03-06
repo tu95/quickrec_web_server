@@ -2,8 +2,11 @@ import { promises as fs } from 'fs'
 import { basename, extname, join } from 'path'
 import { readConfigForUser } from './config-store'
 import { runChat } from './llm-client'
-import { enqueueMp3Convert } from './mp3-queue'
-import { uploadLocalFileToOss } from './oss-storage'
+import { signOssObjectUrl } from './oss-storage'
+import {
+  findLatestUserRecordingByFileName,
+  getUserRecordingById
+} from './recorder-multiuser-store'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const NOTES_DIR = join(UPLOAD_DIR, 'meeting_notes')
@@ -123,8 +126,8 @@ function normalizeUserId(rawUserId) {
 function canAccessByUser(ownerUserId, requestUserId) {
   const owner = normalizeUserId(ownerUserId)
   const requester = normalizeUserId(requestUserId)
-  if (!requester) return true
-  if (!owner) return true
+  if (!requester) return false
+  if (!owner) return false
   return owner === requester
 }
 
@@ -148,6 +151,43 @@ async function ensureMeetingDirs() {
   await fs.mkdir(NOTES_DIR, { recursive: true })
   await fs.mkdir(JOBS_DIR, { recursive: true })
   await fs.mkdir(ASR_ARCHIVE_DIR, { recursive: true })
+}
+
+async function resolveLegacyNoteOwnerUserId(noteId) {
+  const safeNoteId = safeEntityId(noteId)
+  if (!safeNoteId) return ''
+  try {
+    const entries = await fs.readdir(JOBS_DIR, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry?.isFile?.() || !entry.name.endsWith('.json')) continue
+      const jobPath = join(JOBS_DIR, entry.name)
+      let job = null
+      try {
+        const raw = await fs.readFile(jobPath, 'utf8')
+        job = JSON.parse(raw)
+      } catch {
+        continue
+      }
+      if (!job || typeof job !== 'object') continue
+      const resultNoteId = safeEntityId(job?.result?.noteId)
+      if (resultNoteId !== safeNoteId) continue
+      const owner = normalizeUserId(job?.userId)
+      if (owner) return owner
+    }
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return ''
+    throw error
+  }
+  return ''
+}
+
+async function existsFile(filePath) {
+  try {
+    await fs.access(filePath)
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function persistJob(job) {
@@ -217,6 +257,7 @@ function toClientJob(job) {
   if (!job) return null
   return {
     id: job.id,
+    recordingId: safeEntityId(job.recordingId),
     status: job.status,
     stage: job.stage,
     createdAt: job.createdAt,
@@ -647,53 +688,60 @@ async function transcribeWithAsr(config, audioUrl, options = null) {
   throw new Error('ASR 超时: 任务未在预期时间内完成')
 }
 
-async function existsFile(filePath) {
-  try {
-    await fs.access(filePath)
-    return true
-  } catch {
-    return false
+async function resolveRecordingForJob(job) {
+  const userId = normalizeUserId(job?.userId)
+  if (!userId) {
+    throw new Error('任务缺少用户信息')
   }
+  const recordingId = safeEntityId(job?.recordingId)
+  if (recordingId) {
+    const recording = await getUserRecordingById(userId, recordingId)
+    if (recording) return recording
+    throw new Error('录音不存在或无权限')
+  }
+  const sourceName = safeFileName(job?.fileName)
+  if (!sourceName) {
+    throw new Error('任务缺少录音信息')
+  }
+  const recording = await findLatestUserRecordingByFileName(userId, sourceName)
+  if (!recording) {
+    throw new Error('录音不存在或无权限')
+  }
+  return recording
 }
 
-async function resolveAsrSourceFile(fileName) {
-  const sourceName = safeFileName(fileName)
+function resolveAsrSourceFromRecording(config, recording) {
+  const sourceName = safeFileName(recording?.file_name || recording?.fileName || '')
   if (!sourceName) {
-    throw new Error('invalid filename')
+    throw new Error('录音文件名无效')
   }
-  const sourcePath = join(UPLOAD_DIR, sourceName)
-  const sourceExists = await existsFile(sourcePath)
-  if (!sourceExists) {
-    throw new Error('source file not found')
-  }
-
-  const sourceExt = extname(sourceName).toLowerCase()
-  if (sourceExt !== '.opus') {
+  const ossKey = String(recording?.oss_key || recording?.ossKey || '').trim()
+  const ossUrl = String(recording?.oss_url || recording?.ossUrl || '').trim()
+  if (ossKey) {
+    const signed = signOssObjectUrl(config, ossKey, {
+      signedUrlExpiresSec: config?.aliyun?.oss?.asrSignedUrlExpiresSec
+    })
+    const asrUrl = String(signed?.signedUrl || signed?.url || '').trim()
+    if (!asrUrl) {
+      throw new Error('录音对象签名失败')
+    }
     return {
       fileName: sourceName,
-      filePath: sourcePath
+      asrAudioUrl: asrUrl,
+      asrPublicAudioUrl: String(signed?.url || ossUrl),
+      asrOssObjectKey: ossKey,
+      asrSignedUrlExpiresSec: Number(signed?.signedUrlExpiresSec || 0)
     }
   }
-
-  const mp3FileName = `${sourceName.slice(0, -5)}.mp3`
-  const mp3FilePath = join(UPLOAD_DIR, mp3FileName)
-  if (await existsFile(mp3FilePath)) {
-    return {
-      fileName: mp3FileName,
-      filePath: mp3FilePath
-    }
+  if (!ossUrl) {
+    throw new Error('录音缺少 OSS 地址')
   }
-
-  const converted = await enqueueMp3Convert({
-    uploadDir: UPLOAD_DIR,
-    opusFileName: sourceName,
-    overwrite: false,
-    removeSource: false,
-    source: 'meeting-notes'
-  })
   return {
-    fileName: converted.filename,
-    filePath: converted.path
+    fileName: sourceName,
+    asrAudioUrl: ossUrl,
+    asrPublicAudioUrl: ossUrl,
+    asrOssObjectKey: '',
+    asrSignedUrlExpiresSec: 0
   }
 }
 
@@ -706,28 +754,28 @@ async function runMeetingJob(job) {
 
   try {
     await ensureJobNotCancelled(current)
+    const recording = await resolveRecordingForJob(current)
+    await ensureJobNotCancelled(current)
+    current = await updateJob(current, {
+      recordingId: String(recording.id || ''),
+      fileName: String(recording.file_name || current.fileName || '')
+    })
+    await ensureJobNotCancelled(current)
     const config = await readConfigForUser(current.userId)
     await ensureJobNotCancelled(current)
-    const asrSource = await resolveAsrSourceFile(current.fileName)
-    const signedUrlExpiresSec = Number(config?.aliyun?.oss?.asrSignedUrlExpiresSec || 21600)
-
-    current = await updateJob(current, { stage: 'uploading' })
-    await ensureJobNotCancelled(current)
-    const ossUpload = await uploadLocalFileToOss(config, asrSource.filePath, asrSource.fileName, {
-      signedUrlExpiresSec
-    })
-    const asrUrl = String(ossUpload.signedUrl || ossUpload.url || '').trim()
+    const asrSource = resolveAsrSourceFromRecording(config, recording)
+    const asrUrl = String(asrSource.asrAudioUrl || '').trim()
     if (!asrUrl) {
-      throw new Error('OSS 上传成功但未生成可用的 ASR 访问链接')
+      throw new Error('录音缺少可用的 ASR 访问链接')
     }
 
     current = await updateJob(current, {
       stage: 'asr',
       asrSourceFileName: asrSource.fileName,
       asrAudioUrl: asrUrl,
-      asrPublicAudioUrl: String(ossUpload.url || ''),
-      asrOssObjectKey: ossUpload.objectKey,
-      asrSignedUrlExpiresSec: Number(ossUpload.signedUrlExpiresSec || 0)
+      asrPublicAudioUrl: String(asrSource.asrPublicAudioUrl || ''),
+      asrOssObjectKey: String(asrSource.asrOssObjectKey || ''),
+      asrSignedUrlExpiresSec: Number(asrSource.asrSignedUrlExpiresSec || 0)
     })
     const asrResult = await transcribeWithAsr(config, asrUrl, {
       checkCancelled: () => ensureJobNotCancelled(current.id)
@@ -800,6 +848,7 @@ async function runMeetingJob(job) {
     const asrArchive = {
       noteId,
       userId: normalizeUserId(current.userId),
+      recordingId: safeEntityId(current.recordingId),
       fileName: current.fileName,
       createdAt: Date.now(),
       asrAudioUrl: String(current.asrAudioUrl || ''),
@@ -817,6 +866,7 @@ async function runMeetingJob(job) {
     const metadata = {
       id: noteId,
       userId: normalizeUserId(current.userId),
+      recordingId: safeEntityId(current.recordingId),
       fileName: current.fileName,
       createdAt: Date.now(),
       providerId: provider.id,
@@ -867,14 +917,37 @@ async function runMeetingJob(job) {
 }
 
 export async function createMeetingJob(input) {
-  const fileName = safeFileName(input?.fileName)
-  if (!fileName) {
-    throw new Error('invalid filename')
+  const userId = normalizeUserId(input?.userId)
+  if (!userId) {
+    throw new Error('缺少用户信息')
   }
+  const requestedRecordingId = safeEntityId(input?.recordingId)
+  const requestedFileName = safeFileName(input?.fileName)
+
+  let recording = null
+  if (requestedRecordingId) {
+    recording = await getUserRecordingById(userId, requestedRecordingId)
+    if (!recording) {
+      throw new Error('录音不存在或无权限')
+    }
+  } else if (requestedFileName) {
+    recording = await findLatestUserRecordingByFileName(userId, requestedFileName)
+    if (!recording) {
+      throw new Error('录音不存在或无权限')
+    }
+  } else {
+    throw new Error('recordingId is required')
+  }
+
+  const recordingId = safeEntityId(recording?.id || requestedRecordingId)
+  const fileName = safeFileName(recording?.file_name || requestedFileName)
+  if (!recordingId || !fileName) throw new Error('录音信息无效')
+
   const id = makeId('job')
   const job = {
     id,
-    userId: normalizeUserId(input?.userId),
+    userId,
+    recordingId,
     fileName,
     origin: String(input?.origin || ''),
     status: 'queued',
@@ -912,11 +985,12 @@ export async function getMeetingJob(id, userId) {
   return toClientJob(stored)
 }
 
-export async function cancelMeetingJob(id) {
+export async function cancelMeetingJob(id, userId) {
   const jobId = safeEntityId(id)
   if (!jobId) return null
   const job = await getLatestJobState(jobId)
   if (!job) return null
+  if (!canAccessByUser(job.userId, userId)) return null
 
   const status = normalizeJobStatus(job.status)
   if (status === 'cancelled' || status === 'completed' || status === 'failed') {
@@ -942,7 +1016,17 @@ export async function getMeetingNote(noteId, userId) {
     const markdown = await fs.readFile(markdownPath, 'utf8')
     const metadataText = await fs.readFile(metadataPath, 'utf8')
     const metadata = JSON.parse(metadataText)
-    if (!canAccessByUser(metadata?.userId, userId)) {
+    let ownerUserId = normalizeUserId(metadata?.userId)
+    if (!ownerUserId) {
+      ownerUserId = await resolveLegacyNoteOwnerUserId(safeNoteId)
+      if (ownerUserId) {
+        metadata.userId = ownerUserId
+        try {
+          await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), 'utf8')
+        } catch {}
+      }
+    }
+    if (!canAccessByUser(ownerUserId, userId)) {
       return null
     }
     const hasAsrArchive = await existsFile(asrArchivePath)

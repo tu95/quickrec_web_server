@@ -1,12 +1,10 @@
-import { promises as fs } from 'fs'
-import { join } from 'path'
 import {
   createSupabaseServiceClient,
   getSupabaseServiceConfigError
 } from './supabase-client'
 
-const CONFIG_PATH = join(process.cwd(), 'config.json')
 const USER_CONFIG_TABLE = 'recorder_user_configs'
+const MISSING_USER_CONFIG_TABLE_ERROR = '缺少 recorder_user_configs 表，请先在 Supabase 执行 web_server/supabase/schema.sql'
 
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value))
@@ -57,6 +55,13 @@ function isMissingUserConfigTableError(error) {
   if (code === 'PGRST205') return true
   const text = String(error?.message || error || '').toLowerCase()
   return text.includes('recorder_user_configs') && text.includes('could not find the table')
+}
+
+function wrapUserConfigTableError(error, actionText) {
+  if (isMissingUserConfigTableError(error)) {
+    throw new Error(MISSING_USER_CONFIG_TABLE_ERROR)
+  }
+  throw new Error(`${actionText}: ${String(error?.message || error)}`)
 }
 
 export const DEFAULT_CONFIG = {
@@ -278,24 +283,12 @@ function normalizeConfig(raw) {
   }
 }
 
-export async function ensureConfigFile() {
-  try {
-    await fs.access(CONFIG_PATH)
-  } catch {
-    const text = `${JSON.stringify(DEFAULT_CONFIG, null, 2)}\n`
-    await fs.writeFile(CONFIG_PATH, text, 'utf8')
-  }
-}
-
 export async function readConfig() {
-  await ensureConfigFile()
-  const text = await fs.readFile(CONFIG_PATH, 'utf8')
-  const parsed = JSON.parse(text)
-  return normalizeConfig(parsed)
+  return normalizeConfig(DEFAULT_CONFIG)
 }
 
 export async function readConfigForUser(userId) {
-  const baseConfig = await readConfig()
+  const baseConfig = normalizeConfig(DEFAULT_CONFIG)
   const uid = normalizeUserId(userId)
   if (!uid) {
     return baseConfig
@@ -314,16 +307,30 @@ export async function readConfigForUser(userId) {
     .limit(1)
 
   if (error) {
-    if (isMissingUserConfigTableError(error)) {
-      return baseConfig
-    }
-    throw new Error(`读取用户配置失败: ${String(error.message || error)}`)
+    wrapUserConfigTableError(error, '读取用户配置失败')
   }
 
   const row = firstRow(data)
   const userConfig = parseStoredUserConfig(row?.config_json)
   if (!userConfig) {
-    return baseConfig
+    const now = nowIso()
+    const { data: insertedData, error: insertError } = await client
+      .from(USER_CONFIG_TABLE)
+      .upsert(
+        {
+          user_id: uid,
+          config_json: baseConfig,
+          updated_at: now
+        },
+        { onConflict: 'user_id' }
+      )
+      .select('config_json')
+      .limit(1)
+    if (insertError) {
+      wrapUserConfigTableError(insertError, '初始化用户配置失败')
+    }
+    const inserted = parseStoredUserConfig(firstRow(insertedData)?.config_json)
+    return normalizeConfig(inserted || baseConfig)
   }
   return mergeConfigWithSecretPreserve(baseConfig, userConfig)
 }
@@ -444,10 +451,7 @@ export function mergeConfigWithSecretPreserve(currentConfig, incomingConfig) {
 }
 
 export async function writeConfig(inputConfig) {
-  const nextConfig = normalizeConfig(inputConfig)
-  const text = `${JSON.stringify(nextConfig, null, 2)}\n`
-  await fs.writeFile(CONFIG_PATH, text, 'utf8')
-  return nextConfig
+  throw new Error('writeConfig 已停用，请使用 writeConfigForUser 保存到 Supabase')
 }
 
 export async function writeConfigForUser(userId, inputConfig) {
@@ -476,10 +480,7 @@ export async function writeConfigForUser(userId, inputConfig) {
     .limit(1)
 
   if (error) {
-    if (isMissingUserConfigTableError(error)) {
-      throw new Error('缺少 recorder_user_configs 表，请先在 Supabase 执行 web_server/supabase/schema.sql')
-    }
-    throw new Error(`保存用户配置失败: ${String(error.message || error)}`)
+    wrapUserConfigTableError(error, '保存用户配置失败')
   }
 
   const row = firstRow(data)

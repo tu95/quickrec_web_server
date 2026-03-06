@@ -18,7 +18,7 @@ export async function POST(request, { params }) {
     )
   }
 
-  const job = await cancelMeetingJob(id)
+  const job = await cancelMeetingJob(id, String(auth.user?.id || ''))
   if (!job) {
     return Response.json(
       { success: false, error: 'job not found' },

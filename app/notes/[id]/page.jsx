@@ -1,8 +1,8 @@
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
+import { headers } from 'next/headers'
+import { notFound, redirect } from 'next/navigation'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getMeetingNote } from '../../api/_lib/meeting-notes'
 import AsrArchivePanel from './asr-archive-panel'
 import styles from './note-viewer.module.css'
 
@@ -19,11 +19,50 @@ function safeText(input, fallback) {
   return text || fallback
 }
 
+function buildOrigin(headerStore) {
+  const forwardedHost = headerStore.get('x-forwarded-host')
+  const forwardedProto = headerStore.get('x-forwarded-proto')
+  if (forwardedHost) {
+    return `${forwardedProto || 'http'}://${forwardedHost}`
+  }
+  const host = headerStore.get('host') || 'localhost:3000'
+  return `${forwardedProto || 'http'}://${host}`
+}
+
 export default async function NoteViewerPage({ params }) {
   const noteId = String(params?.id || '').trim()
   if (!noteId) notFound()
 
-  const note = await getMeetingNote(noteId)
+  const headerStore = headers()
+  const cookie = String(headerStore.get('cookie') || '')
+  if (!cookie) {
+    redirect(`/login?next=${encodeURIComponent(`/notes/${noteId}`)}`)
+  }
+  const origin = buildOrigin(headerStore)
+  let note = null
+  try {
+    const res = await fetch(`${origin}/api/meeting-notes/${encodeURIComponent(noteId)}?format=json`, {
+      cache: 'no-store',
+      headers: { cookie }
+    })
+    if (res.status === 401) {
+      redirect(`/login?next=${encodeURIComponent(`/notes/${noteId}`)}`)
+    }
+    if (res.status === 404) {
+      notFound()
+    }
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`)
+    }
+    const data = await res.json().catch(() => null)
+    note = data?.success ? data.note : null
+  } catch (error) {
+    console.error('[notes-page] load note failed', {
+      noteId,
+      error: String(error?.message || error)
+    })
+    notFound()
+  }
   if (!note) notFound()
 
   const markdown = String(note.markdown || '').trim()

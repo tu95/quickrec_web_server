@@ -52,6 +52,13 @@ function createOssClientFromConfig(config) {
   }
 }
 
+function normalizeObjectKey(rawKey) {
+  const key = trimSlash(String(rawKey || ''))
+  if (!key) return ''
+  if (key === '.' || key === '..') return ''
+  return key
+}
+
 export async function uploadLocalFileToOss(config, localFilePath, objectFileName, options) {
   const safeFileName = basename(String(objectFileName || ''))
   if (!safeFileName || safeFileName === '.' || safeFileName === '..') {
@@ -124,5 +131,46 @@ export async function uploadBufferToOss(config, buffer, objectFileName, options)
     signedUrl,
     signedUrlExpiresSec,
     bucket: normalized.bucket
+  }
+}
+
+export function signOssObjectUrl(config, objectKey, options) {
+  const key = normalizeObjectKey(objectKey)
+  if (!key) {
+    throw new Error('OSS 签名失败: objectKey 不能为空')
+  }
+  const { client, normalized } = createOssClientFromConfig(config)
+  const signedUrlExpiresSec = toSignedUrlExpiresSec(options?.signedUrlExpiresSec)
+  const signedUrl = client.signatureUrl(key, {
+    method: 'GET',
+    expires: signedUrlExpiresSec
+  })
+
+  const publicBaseUrl = String(normalized.publicBaseUrl || '').replace(/\/+$/, '')
+  const publicUrl = publicBaseUrl
+    ? `${publicBaseUrl}/${encodePath(key)}`
+    : ''
+
+  return {
+    objectKey: key,
+    signedUrl: String(signedUrl || ''),
+    url: publicUrl,
+    signedUrlExpiresSec
+  }
+}
+
+export async function deleteOssObject(config, objectKey) {
+  const key = normalizeObjectKey(objectKey)
+  if (!key) return { deleted: false, skipped: true }
+  const { client } = createOssClientFromConfig(config)
+  try {
+    await client.delete(key)
+    return { deleted: true, skipped: false }
+  } catch (error) {
+    const text = String(error?.message || error || '')
+    if (text.toLowerCase().includes('nosuchkey') || text.toLowerCase().includes('not found')) {
+      return { deleted: false, skipped: false, notFound: true }
+    }
+    throw error
   }
 }

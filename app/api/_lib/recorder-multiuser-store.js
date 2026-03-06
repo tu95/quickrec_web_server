@@ -55,6 +55,17 @@ function firstRow(data) {
   return null
 }
 
+function normalizeText(raw, maxLen = 0) {
+  const text = String(raw || '').trim()
+  if (!text) return ''
+  if (!maxLen || maxLen <= 0) return text
+  return text.slice(0, maxLen)
+}
+
+function isUuidText(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''))
+}
+
 function getDbErrorText(error) {
   if (!error || typeof error !== 'object') return ''
   return [
@@ -657,6 +668,88 @@ export async function insertRecordingMetadata(input) {
     .limit(1)
   if (error) throw new Error(String(error.message || '写入录音记录失败'))
   return firstRow(data)
+}
+
+export async function listUserRecordings(userId, options) {
+  const uid = normalizeText(userId, 120)
+  if (!uid) return []
+  const opts = (options && typeof options === 'object') ? options : {}
+  const limit = Number(opts.limit)
+  const safeLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.min(500, Math.floor(limit)))
+    : 300
+
+  const client = createSupabaseServiceClient()
+  const { data, error } = await client
+    .from(TABLE.recordings)
+    .select('*')
+    .eq('user_id', uid)
+    .order('created_at', { ascending: false })
+    .limit(safeLimit)
+  if (error) throw new Error(String(error.message || '读取录音列表失败'))
+  return Array.isArray(data) ? data : []
+}
+
+export async function getUserRecordingById(userId, recordingId) {
+  const uid = normalizeText(userId, 120)
+  const rid = normalizeText(recordingId, 120)
+  if (!uid || !rid || !isUuidText(rid)) return null
+  const client = createSupabaseServiceClient()
+  const { data, error } = await client
+    .from(TABLE.recordings)
+    .select('*')
+    .eq('id', rid)
+    .eq('user_id', uid)
+    .limit(1)
+  if (error) throw new Error(String(error.message || '读取录音失败'))
+  return firstRow(data)
+}
+
+export async function findLatestUserRecordingByFileName(userId, fileName) {
+  const uid = normalizeText(userId, 120)
+  const name = normalizeText(fileName, 255)
+  if (!uid || !name) return null
+  const client = createSupabaseServiceClient()
+  const { data, error } = await client
+    .from(TABLE.recordings)
+    .select('*')
+    .eq('user_id', uid)
+    .eq('file_name', name)
+    .order('created_at', { ascending: false })
+    .limit(1)
+  if (error) throw new Error(String(error.message || '读取录音失败'))
+  return firstRow(data)
+}
+
+export async function deleteUserRecordingById(userId, recordingId) {
+  const uid = normalizeText(userId, 120)
+  const rid = normalizeText(recordingId, 120)
+  if (!uid || !rid || !isUuidText(rid)) throw new Error('录音参数无效')
+  const client = createSupabaseServiceClient()
+
+  const existing = await getUserRecordingById(uid, rid)
+  if (!existing) {
+    return {
+      deleted: false,
+      existed: false,
+      recording: null
+    }
+  }
+
+  const { data, error } = await client
+    .from(TABLE.recordings)
+    .delete()
+    .eq('id', rid)
+    .eq('user_id', uid)
+    .select('*')
+    .limit(1)
+  if (error) throw new Error(String(error.message || '删除录音失败'))
+  const deletedRow = firstRow(data)
+  return {
+    deleted: !!deletedRow,
+    existed: true,
+    recording: deletedRow || existing
+  }
 }
 
 export async function listUserDevices(userId) {

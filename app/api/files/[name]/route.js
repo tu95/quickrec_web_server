@@ -1,6 +1,12 @@
 import { promises as fs } from 'fs'
-import { basename, extname, join } from 'path'
+import { extname, join } from 'path'
 import { requireSiteAuth } from '../../_lib/admin-auth'
+import { readConfigForUser } from '../../_lib/config-store'
+import { deleteOssObject, signOssObjectUrl } from '../../_lib/oss-storage'
+import {
+  deleteUserRecordingById,
+  getUserRecordingById
+} from '../../_lib/recorder-multiuser-store'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const CORS_HEADERS = {
@@ -9,87 +15,36 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type,Authorization',
 }
 
-const MIME_TYPES = {
-  '.opus': 'audio/opus',
-  '.mp3': 'audio/mpeg',
-  '.webm': 'audio/webm',
-  '.ogg': 'audio/ogg',
+function normalizeRecordingId(raw) {
+  return String(raw || '').trim()
 }
 
-function sanitizeFileName(rawName) {
-  let decoded = ''
-  try {
-    decoded = decodeURIComponent(String(rawName || ''))
-  } catch {
-    return null
+function buildDirectDownloadUrl(recording, config) {
+  const key = String(recording?.oss_key || '').trim()
+  const direct = String(recording?.oss_url || '').trim()
+  if (key && config) {
+    const signed = signOssObjectUrl(config, key, {
+      signedUrlExpiresSec: config?.aliyun?.oss?.asrSignedUrlExpiresSec
+    })
+    return String(signed?.signedUrl || signed?.url || direct)
   }
-  const safeName = basename(decoded)
-  if (!safeName || safeName === '.' || safeName === '..' || safeName !== decoded) {
-    return null
-  }
-  return safeName
+  return direct
 }
 
-function parseSingleRange(rangeHeader, totalSize) {
-  if (!rangeHeader) return null
-  const match = /^bytes=(\d*)-(\d*)$/.exec(String(rangeHeader).trim())
-  if (!match) return { error: 'invalid range format' }
-
-  const startRaw = match[1]
-  const endRaw = match[2]
-  if (!startRaw && !endRaw) {
-    return { error: 'invalid empty range' }
+async function cleanupLocalLegacyFile(fileName) {
+  const safeName = String(fileName || '').trim()
+  if (!safeName) return
+  const ext = extname(safeName).toLowerCase()
+  const targets = [safeName]
+  if (ext === '.opus' || ext === '.mp3') {
+    const base = safeName.slice(0, -ext.length)
+    targets.push(`${base}.opus`, `${base}.mp3`)
   }
-
-  let start = startRaw ? Number(startRaw) : null
-  let end = endRaw ? Number(endRaw) : null
-
-  if (start === null) {
-    if (!Number.isFinite(end) || end <= 0) {
-      return { error: 'invalid suffix range' }
-    }
-    const suffixLength = Math.floor(end)
-    if (suffixLength >= totalSize) {
-      start = 0
-    } else {
-      start = totalSize - suffixLength
-    }
-    end = totalSize - 1
-  } else {
-    if (!Number.isFinite(start) || start < 0) {
-      return { error: 'invalid start range' }
-    }
-    start = Math.floor(start)
-
-    if (end === null || !Number.isFinite(end)) {
-      end = totalSize - 1
-    } else {
-      end = Math.floor(end)
-    }
-
-    if (start >= totalSize) {
-      return { unsatisfiable: true }
-    }
-    if (end < start) {
-      return { error: 'invalid range order' }
-    }
-    if (end >= totalSize) {
-      end = totalSize - 1
-    }
-  }
-
-  return { start, end }
-}
-
-async function readFileChunk(filePath, start, end) {
-  const byteLength = end - start + 1
-  const fileHandle = await fs.open(filePath, 'r')
-  try {
-    const buffer = Buffer.alloc(byteLength)
-    const { bytesRead } = await fileHandle.read(buffer, 0, byteLength, start)
-    return bytesRead === byteLength ? buffer : buffer.subarray(0, bytesRead)
-  } finally {
-    await fileHandle.close()
+  for (const name of targets) {
+    const path = join(UPLOAD_DIR, name)
+    try {
+      await fs.unlink(path)
+    } catch {}
   }
 }
 
@@ -102,81 +57,48 @@ export async function GET(request, { params }) {
     )
   }
 
-  const fileName = sanitizeFileName(params?.name)
-  if (!fileName) {
+  const userId = String(auth.user?.id || '').trim()
+  const recordingId = normalizeRecordingId(params?.name)
+  if (!recordingId) {
     return Response.json(
-      { success: false, error: 'invalid filename' },
+      { success: false, error: 'invalid recording id' },
       { status: 400, headers: CORS_HEADERS }
     )
   }
 
-  const filePath = join(UPLOAD_DIR, fileName)
-
   try {
-    const stat = await fs.stat(filePath)
-    const totalSize = Number(stat.size) || 0
-    const contentType = MIME_TYPES[extname(fileName).toLowerCase()] || 'application/octet-stream'
-    const baseHeaders = {
-      ...CORS_HEADERS,
-      'Content-Type': contentType,
-      'Content-Disposition': `inline; filename="${fileName}"`,
-      'Accept-Ranges': 'bytes',
+    const recording = await getUserRecordingById(userId, recordingId)
+    if (!recording) {
+      return Response.json(
+        { success: false, error: 'file not found' },
+        { status: 404, headers: CORS_HEADERS }
+      )
     }
-
-    const rangeHeader = request.headers.get('range')
-    const range = parseSingleRange(rangeHeader, totalSize)
-
-    if (range && range.unsatisfiable) {
-      return new Response(null, {
-        status: 416,
-        headers: {
-          ...baseHeaders,
-          'Content-Range': `bytes */${totalSize}`,
-          'Content-Length': '0'
-        }
-      })
+    const config = await readConfigForUser(userId)
+    const targetUrl = buildDirectDownloadUrl(recording, config)
+    if (!targetUrl) {
+      return Response.json(
+        { success: false, error: '文件下载地址不可用' },
+        { status: 404, headers: CORS_HEADERS }
+      )
     }
-
-    if (range && range.error) {
-      return new Response(null, {
-        status: 416,
-        headers: {
-          ...baseHeaders,
-          'Content-Range': `bytes */${totalSize}`,
-          'Content-Length': '0'
-        }
-      })
-    }
-
-    if (range && typeof range.start === 'number' && typeof range.end === 'number') {
-      const chunkBuffer = await readFileChunk(filePath, range.start, range.end)
-      return new Response(chunkBuffer, {
-        status: 206,
-        headers: {
-          ...baseHeaders,
-          'Content-Range': `bytes ${range.start}-${range.end}/${totalSize}`,
-          'Content-Length': String(chunkBuffer.length),
-        },
-      })
-    }
-
-    const fileBuffer = await fs.readFile(filePath)
-    return new Response(fileBuffer, {
+    return new Response(null, {
+      status: 302,
       headers: {
-        ...baseHeaders,
-        'Content-Length': String(fileBuffer.length),
-      },
+        ...CORS_HEADERS,
+        Location: targetUrl
+      }
     })
-  } catch {
+  } catch (error) {
     return Response.json(
-      { success: false, error: 'file not found' },
-      { status: 404, headers: CORS_HEADERS }
+      { success: false, error: String(error?.message || error) },
+      { status: 500, headers: CORS_HEADERS }
     )
   }
 }
 
-export async function DELETE(_request, { params }) {
-  const auth = await requireSiteAuth(_request)
+export async function DELETE(request, { params }) {
+  const auth = await requireSiteAuth(request)
   if (!auth.ok) {
     return Response.json(
       { success: false, error: auth.error },
@@ -184,41 +106,51 @@ export async function DELETE(_request, { params }) {
     )
   }
 
-  const fileName = sanitizeFileName(params?.name)
-  if (!fileName) {
+  const userId = String(auth.user?.id || '').trim()
+  const recordingId = normalizeRecordingId(params?.name)
+  if (!recordingId) {
     return Response.json(
-      { success: false, error: 'invalid filename' },
+      { success: false, error: 'invalid recording id' },
       { status: 400, headers: CORS_HEADERS }
     )
   }
 
-  const filePath = join(UPLOAD_DIR, fileName)
-  const deleted = []
-  const ext = extname(fileName).toLowerCase()
-
   try {
-    await fs.unlink(filePath)
-    deleted.push(fileName)
-
-    if (ext === '.opus' || ext === '.mp3') {
-      const baseName = fileName.slice(0, -ext.length)
-      for (const siblingName of [`${baseName}.opus`, `${baseName}.mp3`]) {
-        if (siblingName === fileName) continue
-        try {
-          await fs.unlink(join(UPLOAD_DIR, siblingName))
-          deleted.push(siblingName)
-        } catch {}
-      }
+    const recording = await getUserRecordingById(userId, recordingId)
+    if (!recording) {
+      return Response.json(
+        { success: false, error: 'file not found' },
+        { status: 404, headers: CORS_HEADERS }
+      )
     }
 
+    const config = await readConfigForUser(userId)
+    const ossKey = String(recording?.oss_key || '').trim()
+    if (ossKey) {
+      await deleteOssObject(config, ossKey)
+    }
+
+    const deleted = await deleteUserRecordingById(userId, recordingId)
+    if (!deleted?.deleted) {
+      return Response.json(
+        { success: false, error: '删除失败，请重试' },
+        { status: 500, headers: CORS_HEADERS }
+      )
+    }
+
+    await cleanupLocalLegacyFile(String(recording?.file_name || ''))
+
     return Response.json(
-      { success: true, deleted },
+      {
+        success: true,
+        deleted: [String(recordingId)]
+      },
       { headers: CORS_HEADERS }
     )
-  } catch {
+  } catch (error) {
     return Response.json(
-      { success: false, error: 'file not found' },
-      { status: 404, headers: CORS_HEADERS }
+      { success: false, error: String(error?.message || error) },
+      { status: 500, headers: CORS_HEADERS }
     )
   }
 }

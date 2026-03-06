@@ -10,15 +10,17 @@ export async function POST(request) {
     )
   }
   const body = await request.json().catch(() => null)
-  const fileName = String(body?.fileName || body?.name || '')
-  if (!fileName) {
+  const recordingId = String(body?.recordingId || '').trim()
+  const fileName = String(body?.fileName || body?.name || '').trim()
+  if (!recordingId && !fileName) {
     return Response.json(
-      { success: false, error: 'fileName is required' },
+      { success: false, error: 'recordingId or fileName is required' },
       { status: 400 }
     )
   }
   try {
     const job = await createMeetingJob({
+      recordingId,
       fileName,
       origin: getRequestOrigin(request),
       providerId: String(body?.providerId || ''),
@@ -31,9 +33,15 @@ export async function POST(request) {
       job
     })
   } catch (error) {
+    const text = String(error?.message || error)
+    const status = text.includes('录音不存在或无权限')
+      ? 404
+      : (text.includes('recordingId') || text.includes('录音参数无效') || text.includes('录音信息无效'))
+        ? 400
+        : 500
     return Response.json(
-      { success: false, error: String(error?.message || error) },
-      { status: 500 }
+      { success: false, error: text },
+      { status }
     )
   }
 }
