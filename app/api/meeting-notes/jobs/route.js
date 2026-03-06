@@ -1,5 +1,8 @@
 import { createMeetingJob, getRequestOrigin } from '../../_lib/meeting-notes'
 import { requireSiteAuth } from '../../_lib/admin-auth'
+import { consumeMeetingNotesQuota } from '../../_lib/usage-quota-store'
+
+const QUOTA_EXCEEDED_CODE = 'MEETING_NOTES_QUOTA_EXCEEDED'
 
 export async function POST(request) {
   const auth = await requireSiteAuth(request)
@@ -18,6 +21,31 @@ export async function POST(request) {
       { status: 400 }
     )
   }
+
+  if (auth.role !== 'admin') {
+    try {
+      const quota = await consumeMeetingNotesQuota(String(auth.user?.id || ''))
+      if (!quota.allowed) {
+        return Response.json(
+          {
+            success: false,
+            error: quota.message,
+            code: QUOTA_EXCEEDED_CODE,
+            limit: quota.limit,
+            usedCount: quota.usedCount,
+            remaining: quota.remaining
+          },
+          { status: 403 }
+        )
+      }
+    } catch (error) {
+      return Response.json(
+        { success: false, error: String(error?.message || error) },
+        { status: 503 }
+      )
+    }
+  }
+
   try {
     const job = await createMeetingJob({
       recordingId,

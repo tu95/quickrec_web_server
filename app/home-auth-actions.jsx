@@ -40,14 +40,14 @@ export default function HomeAuthActions() {
       <a href="/pair" className={linkClass('/pair')}>
         绑定设备
       </a>
-      <a href="/settings" className={linkClass('/settings')}>
-        系统设置
-      </a>
       <a href="/preview_package" className={linkClass('/preview_package')}>
         获取安装包
       </a>
       <a href="/tutorial" className={linkClass('/tutorial')}>
         教程
+      </a>
+      <a href="/account" className={linkClass('/account')}>
+        账户
       </a>
       <button type="button" onClick={logout} disabled={busy} className="top-nav-link top-nav-link-danger">
         {busy ? '退出中...' : '退出登录'}

@@ -210,6 +210,47 @@ export async function updatePasswordWithAccessToken(accessToken, password) {
   }
 }
 
+export async function updateProfileWithAccessToken(accessToken, profile) {
+  const configError = getSupabaseAnonConfigError()
+  if (configError) throw new Error(configError)
+  const url = getSupabaseUrl()
+  const anonKey = getSupabaseAnonKey()
+  const token = String(accessToken || '').trim()
+  const displayName = String(profile?.displayName || '').trim()
+  if (!token) {
+    throw new Error('缺少访问凭证')
+  }
+  if (!displayName) {
+    throw new Error('用户名不能为空')
+  }
+  if (displayName.length > 32) {
+    throw new Error('用户名最多 32 个字符')
+  }
+
+  const response = await fetch(`${url}/auth/v1/user`, {
+    method: 'PUT',
+    headers: {
+      apikey: anonKey,
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      data: {
+        display_name: displayName
+      }
+    })
+  })
+  const payload = await response.json().catch(() => null)
+  if (!response.ok) {
+    throw new Error(
+      String(payload?.msg || payload?.error_description || payload?.error || '更新用户名失败')
+    )
+  }
+  return {
+    user: payload?.user || null
+  }
+}
+
 export function generateSessionToken() {
   return crypto.randomBytes(24).toString('base64url')
 }

@@ -362,7 +362,6 @@ export default function LoginPage() {
       <section className="panel panel-dark auth-card">
         <p className="hero-kicker">QuickRec Account</p>
         <h1 className="hero-title">{title}</h1>
-        <p className="hero-subtitle">使用 Supabase Auth 完成邮箱登录、注册与密码找回。</p>
 
         {mode !== MODE.reset && (
           <div className="segmented">

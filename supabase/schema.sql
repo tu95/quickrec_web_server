@@ -146,3 +146,88 @@ create policy "user can update own configs"
   for update
   using ((select auth.uid()) = user_id)
   with check ((select auth.uid()) = user_id);
+
+create table if not exists public.recorder_usage_counters (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  feature_key text not null,
+  used_count integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, feature_key)
+);
+
+create index if not exists idx_recorder_usage_counters_feature
+  on public.recorder_usage_counters(feature_key, updated_at desc);
+
+create or replace function public.consume_recorder_quota(
+  p_user_id uuid,
+  p_feature_key text,
+  p_limit integer
+)
+returns table (
+  allowed boolean,
+  used_count integer,
+  remaining integer
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_limit integer := greatest(coalesce(p_limit, 0), 0);
+  v_used integer := 0;
+begin
+  if p_user_id is null then
+    raise exception 'p_user_id is required';
+  end if;
+  if coalesce(trim(p_feature_key), '') = '' then
+    raise exception 'p_feature_key is required';
+  end if;
+
+  insert into public.recorder_usage_counters (
+    user_id,
+    feature_key,
+    used_count,
+    created_at,
+    updated_at
+  )
+  values (
+    p_user_id,
+    p_feature_key,
+    0,
+    now(),
+    now()
+  )
+  on conflict (user_id, feature_key) do nothing;
+
+  update public.recorder_usage_counters
+  set used_count = used_count + 1,
+      updated_at = now()
+  where user_id = p_user_id
+    and feature_key = p_feature_key
+    and used_count < v_limit
+  returning public.recorder_usage_counters.used_count into v_used;
+
+  if found then
+    return query
+      select
+        true as allowed,
+        v_used as used_count,
+        greatest(v_limit - v_used, 0) as remaining;
+    return;
+  end if;
+
+  select public.recorder_usage_counters.used_count
+  into v_used
+  from public.recorder_usage_counters
+  where user_id = p_user_id
+    and feature_key = p_feature_key
+  limit 1;
+
+  return query
+    select
+      false as allowed,
+      coalesce(v_used, 0) as used_count,
+      0 as remaining;
+end;
+$$;

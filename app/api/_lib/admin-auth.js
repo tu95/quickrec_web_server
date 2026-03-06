@@ -7,6 +7,28 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7
 const DEFAULT_SITE_PASSWORD = 'H*ZM7VwhhepPVhwP*HmC83LzWXn9o8'
 const DEFAULT_READONLY_SITE_PASSWORD = 'test20260226'
 
+function normalizeEmail(raw) {
+  return String(raw || '').trim().toLowerCase()
+}
+
+function getAdminEmailSet() {
+  const raw = String(process.env.ADMIN_EMAILS || '').trim()
+  if (!raw) return new Set()
+  return new Set(
+    raw
+      .split(',')
+      .map(item => normalizeEmail(item))
+      .filter(Boolean)
+  )
+}
+
+function isAdminUser(user) {
+  const email = normalizeEmail(user?.email)
+  if (!email) return false
+  const admins = getAdminEmailSet()
+  return admins.has(email)
+}
+
 function base64UrlEncode(input) {
   return Buffer.from(input, 'utf8')
     .toString('base64')
@@ -132,13 +154,25 @@ export async function requireSiteAuth(request) {
     ok: true,
     config,
     user: userAuth.user,
-    role: 'admin',
-    readOnly: false
+    role: isAdminUser(userAuth.user) ? 'admin' : 'user',
+    readOnly: !isAdminUser(userAuth.user)
   }
 }
 
+export async function requireAdminAuth(request) {
+  const auth = await requireSiteAuth(request)
+  if (!auth.ok) return auth
+  if (auth.role !== 'admin') {
+    return {
+      ok: false,
+      status: 403,
+      error: '仅管理员可访问'
+    }
+  }
+  return auth
+}
+
 // Backward compatibility
-export const requireAdminAuth = requireSiteAuth
 export const buildAdminSessionCookie = buildSiteSessionCookie
 export const buildClearAdminSessionCookie = buildClearSiteSessionCookie
 export const createAdminToken = createSiteToken

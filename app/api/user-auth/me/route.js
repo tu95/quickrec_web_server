@@ -1,10 +1,15 @@
 import { requireUserAuth } from '../../_lib/user-auth'
 
 function toUserView(user) {
+  const meta = user?.user_metadata && typeof user.user_metadata === 'object'
+    ? user.user_metadata
+    : {}
+  const displayName = String(meta.display_name || meta.full_name || meta.name || '').trim()
   return {
     id: String(user?.id || ''),
     email: String(user?.email || ''),
-    createdAt: String(user?.created_at || '')
+    createdAt: String(user?.created_at || ''),
+    displayName
   }
 }
 
