@@ -1,10 +1,10 @@
 import { promises as fs } from 'fs'
 import { extname, join } from 'path'
 import { networkInterfaces } from 'os'
-import { enqueueMp3Convert } from '../_lib/mp3-queue'
 import { readConfigForUser } from '../_lib/config-store'
 import { createMeetingJob } from '../_lib/meeting-notes'
 import { requireUserAuth } from '../_lib/user-auth'
+import { ingestUploadedLocalFile } from '../_lib/upload-ingest'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const CORS_HEADERS = {
@@ -101,7 +101,7 @@ export async function POST(request) {
     await fs.writeFile(filepath, buffer)
 
     const origin = getRequestOrigin(request)
-    let sourceUrl = `${origin}/api/files/${encodeURIComponent(filename)}`
+    let sourceUrl = ''
     let mp3Filename = ''
     let mp3Url = ''
     let autoConvertError = ''
@@ -109,35 +109,38 @@ export async function POST(request) {
     let autoMeetingError = ''
     let outputFilename = filename
     let outputSize = buffer.length
-    if (extname(filename).toLowerCase() === '.opus') {
-      try {
-        const converted = await enqueueMp3Convert({
-          uploadDir: UPLOAD_DIR,
-          opusFileName: filename,
-          overwrite: true,
-          removeSource: true,
-          source: 'upload',
-        })
-        mp3Filename = converted.filename
-        mp3Url = `${origin}/api/files/${encodeURIComponent(converted.filename)}`
-        outputFilename = converted.filename
-        outputSize = converted.size
-        sourceUrl = ''
-      } catch (error) {
-        autoConvertError = String(error && error.message ? error.message : error)
-        console.error('[upload] auto convert mp3 failed', {
-          filename,
-          error: autoConvertError,
-          stack: error && error.stack ? String(error.stack) : ''
-        })
+    let recordingId = ''
+    let fileUrl = ''
+
+    try {
+      const ingested = await ingestUploadedLocalFile({
+        userId,
+        localFilePath: filepath,
+        fileName: filename,
+        source: 'upload'
+      })
+      outputFilename = String(ingested.outputFileName || filename)
+      outputSize = Number(ingested.sizeBytes || buffer.length)
+      recordingId = String(ingested.recordingId || '')
+      fileUrl = recordingId ? `${origin}/api/files/${encodeURIComponent(recordingId)}` : ''
+      if (ingested.autoConverted) {
+        mp3Filename = outputFilename
+        mp3Url = fileUrl
+      } else {
+        sourceUrl = fileUrl
       }
+    } catch (error) {
+      autoConvertError = String(error && error.message ? error.message : error)
+      throw error
     }
-    const primaryUrl = mp3Url || sourceUrl
+
+    const primaryUrl = fileUrl || mp3Url || sourceUrl
     if (extname(outputFilename).toLowerCase() === '.mp3') {
       try {
         const config = await readConfigForUser(userId)
         if (config?.meeting?.autoGenerateOnMp3Upload === true) {
           const job = await createMeetingJob({
+            recordingId,
             fileName: outputFilename,
             origin: 'auto-upload',
             userId
@@ -152,6 +155,7 @@ export async function POST(request) {
     return Response.json(
       {
         success: true,
+        recordingId,
         filename: outputFilename,
         size: outputSize,
         sourceUrl,
@@ -203,7 +207,7 @@ export async function GET(request) {
         uploadChunk: 'POST /api/upload-chunk',
         convertMp3: 'POST /api/convert-mp3',
         files: 'GET /api/files',
-        fileDelete: 'DELETE /api/files/{name}',
+        fileDelete: 'DELETE /api/files/{recordingId}',
       },
     },
     { headers: CORS_HEADERS }

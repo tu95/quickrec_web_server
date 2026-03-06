@@ -1,9 +1,9 @@
 import { promises as fs } from 'fs'
 import { extname, join } from 'path'
-import { enqueueMp3Convert } from '../_lib/mp3-queue'
 import { readConfigForUser } from '../_lib/config-store'
 import { createMeetingJob } from '../_lib/meeting-notes'
 import { requireUserAuth } from '../_lib/user-auth'
+import { ingestUploadedLocalFile } from '../_lib/upload-ingest'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const TMP_DIR = join(process.cwd(), 'uploads_tmp')
@@ -20,6 +20,17 @@ async function ensureDirs() {
 
 function safeFileName(name) {
   return String(name || '').replace(/[\/\\]/g, '_') || `recording_${Date.now()}.opus`
+}
+
+function sanitizeSegment(value, fallback = 'x') {
+  const text = String(value || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_')
+  return text || fallback
+}
+
+function buildPartPath(uploadId, userId) {
+  const uid = sanitizeSegment(userId, 'u')
+  const up = sanitizeSegment(uploadId, `up_${Date.now()}`)
+  return join(TMP_DIR, `${uid}_${up}.part`)
 }
 
 function getRequestOrigin(request) {
@@ -135,7 +146,7 @@ export async function POST(request) {
       )
     }
 
-    const partPath = join(TMP_DIR, `${uploadId}.part`)
+    const partPath = buildPartPath(uploadId, userId)
 
     if (index === 0) {
       try {
@@ -151,41 +162,42 @@ export async function POST(request) {
       await fs.rename(partPath, finalPath)
 
       const origin = getRequestOrigin(request)
-      let sourceUrl = `${origin}/api/files/${encodeURIComponent(finalName)}`
+      let sourceUrl = ''
       let mp3Filename = ''
       let mp3Url = ''
       let autoConvertError = ''
       let autoMeetingJobId = ''
       let autoMeetingError = ''
       let outputFilename = finalName
-      if (extname(finalName).toLowerCase() === '.opus') {
-        try {
-          const converted = await enqueueMp3Convert({
-            uploadDir: UPLOAD_DIR,
-            opusFileName: finalName,
-            overwrite: true,
-            removeSource: true,
-            source: 'upload-chunk',
-          })
-          mp3Filename = converted.filename
-          mp3Url = `${origin}/api/files/${encodeURIComponent(converted.filename)}`
-          outputFilename = converted.filename
-          sourceUrl = ''
-        } catch (error) {
-          autoConvertError = String(error && error.message ? error.message : error)
-          console.error('[upload-chunk] auto convert mp3 failed', {
-            filename: finalName,
-            error: autoConvertError,
-            stack: error && error.stack ? String(error.stack) : ''
-          })
+      let recordingId = ''
+      let fileUrl = ''
+      try {
+        const ingested = await ingestUploadedLocalFile({
+          userId,
+          localFilePath: finalPath,
+          fileName: finalName,
+          source: 'upload-chunk'
+        })
+        outputFilename = String(ingested.outputFileName || finalName)
+        recordingId = String(ingested.recordingId || '')
+        fileUrl = recordingId ? `${origin}/api/files/${encodeURIComponent(recordingId)}` : ''
+        if (ingested.autoConverted) {
+          mp3Filename = outputFilename
+          mp3Url = fileUrl
+        } else {
+          sourceUrl = fileUrl
         }
+      } catch (error) {
+        autoConvertError = String(error && error.message ? error.message : error)
+        throw error
       }
-      const primaryUrl = mp3Url || sourceUrl
+      const primaryUrl = fileUrl || mp3Url || sourceUrl
       if (extname(outputFilename).toLowerCase() === '.mp3') {
         try {
           const config = await readConfigForUser(userId)
           if (config?.meeting?.autoGenerateOnMp3Upload === true) {
             const job = await createMeetingJob({
+              recordingId,
               fileName: outputFilename,
               origin: 'auto-upload-chunk',
               userId
@@ -200,6 +212,7 @@ export async function POST(request) {
         {
           success: true,
           done: true,
+          recordingId,
           filename: outputFilename,
           sourceUrl,
           mp3Filename,

@@ -62,9 +62,16 @@ function safeFileName(name) {
   return base || `recording_${Date.now()}.opus`
 }
 
-function buildObjectFileName(fileName) {
+function normalizeUserObjectTag(userId) {
+  const raw = String(userId || '').trim().replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
+  if (!raw) return 'u_unknown'
+  return `u_${raw.slice(0, 16)}`
+}
+
+function buildObjectFileName(fileName, userId) {
   const safe = safeFileName(fileName)
-  return `${Date.now()}_${Math.floor(Math.random() * 1000000)}_${safe}`
+  const userTag = normalizeUserObjectTag(userId)
+  return `${userTag}_${Date.now()}_${Math.floor(Math.random() * 1000000)}_${safe}`
 }
 
 function buildUploadSessionKey(userId, uploadId) {
@@ -354,7 +361,7 @@ async function processAsyncUploadJob(job) {
   }
 
   const fileBuffer = await fs.readFile(outputPath)
-  const objectFileName = buildObjectFileName(outputFileName)
+  const objectFileName = buildObjectFileName(outputFileName, job.userId)
   const config = await readConfigForUser(job.userId)
   const uploaded = await uploadBufferToOss(config, fileBuffer, objectFileName, {
     signedUrlExpiresSec: config?.aliyun?.oss?.asrSignedUrlExpiresSec
