@@ -52,11 +52,33 @@ function createOssClientFromConfig(config) {
   }
 }
 
+function withBucketOverride(config, bucketOverride) {
+  const bucket = String(bucketOverride || '').trim()
+  if (!bucket) return config
+  return {
+    ...(config && typeof config === 'object' ? config : {}),
+    aliyun: {
+      ...((config && typeof config.aliyun === 'object') ? config.aliyun : {}),
+      oss: {
+        ...((config?.aliyun && typeof config.aliyun.oss === 'object') ? config.aliyun.oss : {}),
+        bucket
+      }
+    }
+  }
+}
+
 function normalizeObjectKey(rawKey) {
   const key = trimSlash(String(rawKey || ''))
   if (!key) return ''
   if (key === '.' || key === '..') return ''
   return key
+}
+
+function pickObjectPrefix(normalized, safeFileName) {
+  const lowerName = String(safeFileName || '').toLowerCase()
+  const isOpus = lowerName.endsWith('.opus')
+  const rawPrefix = isOpus ? normalized.objectPrefixOpus : normalized.objectPrefixMp3
+  return trimSlash(rawPrefix)
 }
 
 export async function uploadLocalFileToOss(config, localFilePath, objectFileName, options) {
@@ -66,7 +88,7 @@ export async function uploadLocalFileToOss(config, localFilePath, objectFileName
   }
 
   const { client, normalized } = createOssClientFromConfig(config)
-  const prefix = trimSlash(normalized.objectPrefix)
+  const prefix = pickObjectPrefix(normalized, safeFileName)
   const objectKey = prefix ? `${prefix}/${safeFileName}` : safeFileName
   await client.put(objectKey, localFilePath)
 
@@ -88,7 +110,7 @@ export async function uploadLocalFileToOss(config, localFilePath, objectFileName
 
   return {
     objectKey,
-    url: publicUrl,
+    url: signedUrl,  // 使用签名 URL，确保私有 Bucket 可访问
     signedUrl,
     signedUrlExpiresSec,
     bucket: normalized.bucket
@@ -105,7 +127,7 @@ export async function uploadBufferToOss(config, buffer, objectFileName, options)
   }
 
   const { client, normalized } = createOssClientFromConfig(config)
-  const prefix = trimSlash(normalized.objectPrefix)
+  const prefix = pickObjectPrefix(normalized, safeFileName)
   const objectKey = prefix ? `${prefix}/${safeFileName}` : safeFileName
   await client.put(objectKey, buffer)
 
@@ -127,7 +149,7 @@ export async function uploadBufferToOss(config, buffer, objectFileName, options)
 
   return {
     objectKey,
-    url: publicUrl,
+    url: signedUrl,  // 使用签名 URL，确保私有 Bucket 可访问
     signedUrl,
     signedUrlExpiresSec,
     bucket: normalized.bucket
@@ -139,11 +161,20 @@ export function signOssObjectUrl(config, objectKey, options) {
   if (!key) {
     throw new Error('OSS 签名失败: objectKey 不能为空')
   }
-  const { client, normalized } = createOssClientFromConfig(config)
+  const effectiveConfig = withBucketOverride(config, options?.ossBucket)
+  const { client, normalized } = createOssClientFromConfig(effectiveConfig)
   const signedUrlExpiresSec = toSignedUrlExpiresSec(options?.signedUrlExpiresSec)
+  const forceAttachment = options?.forceAttachment === true
+  const downloadFileName = String(options?.downloadFileName || '').trim()
+  const response = {}
+  if (forceAttachment) {
+    const safeName = downloadFileName.replace(/[\r\n"]/g, '_') || 'recording'
+    response['content-disposition'] = `attachment; filename="${safeName}"`
+  }
   const signedUrl = client.signatureUrl(key, {
     method: 'GET',
-    expires: signedUrlExpiresSec
+    expires: signedUrlExpiresSec,
+    ...(forceAttachment ? { response } : {})
   })
 
   const publicBaseUrl = String(normalized.publicBaseUrl || '').replace(/\/+$/, '')
@@ -159,10 +190,12 @@ export function signOssObjectUrl(config, objectKey, options) {
   }
 }
 
-export async function deleteOssObject(config, objectKey) {
+export async function deleteOssObject(config, objectKey, options) {
   const key = normalizeObjectKey(objectKey)
   if (!key) return { deleted: false, skipped: true }
-  const { client } = createOssClientFromConfig(config)
+  const bucketOverride = options?.ossBucket
+  const effectiveConfig = withBucketOverride(config, bucketOverride)
+  const { client } = createOssClientFromConfig(effectiveConfig)
   try {
     await client.delete(key)
     return { deleted: true, skipped: false }
@@ -170,6 +203,32 @@ export async function deleteOssObject(config, objectKey) {
     const text = String(error?.message || error || '')
     if (text.toLowerCase().includes('nosuchkey') || text.toLowerCase().includes('not found')) {
       return { deleted: false, skipped: false, notFound: true }
+    }
+    throw error
+  }
+}
+
+export async function getOssObject(config, objectKey, options) {
+  const key = normalizeObjectKey(objectKey)
+  if (!key) {
+    throw new Error('OSS 获取失败: objectKey 不能为空')
+  }
+  const bucketOverride = options?.ossBucket
+  const effectiveConfig = withBucketOverride(config, bucketOverride)
+  const { client, normalized } = createOssClientFromConfig(effectiveConfig)
+  try {
+    const result = await client.get(key)
+    return {
+      content: result.content,
+      contentType: result.res.headers['content-type'] || 'application/octet-stream',
+      contentLength: Number(result.res.headers['content-length']) || 0,
+      objectKey: key,
+      bucket: normalized.bucket
+    }
+  } catch (error) {
+    const text = String(error?.message || error || '')
+    if (text.toLowerCase().includes('nosuchkey') || text.toLowerCase().includes('not found')) {
+      return null
     }
     throw error
   }

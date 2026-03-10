@@ -1,8 +1,10 @@
 import { requireAdminAuth } from '../../_lib/admin-auth'
 import {
+  activateSystemConfigProfile,
+  listSystemConfigProfiles,
   mergeConfigWithSecretPreserve,
   sanitizeConfigForClient,
-  writeConfigForUser
+  updateSystemConfigProfile
 } from '../../_lib/config-store'
 import { validateOssConfig } from '../../../../lib/aliyun-validators'
 
@@ -14,12 +16,21 @@ export async function GET(request) {
       { status: auth.status }
     )
   }
-  return Response.json({
-    success: true,
-    config: sanitizeConfigForClient(auth.config),
-    role: auth.role || 'admin',
-    readOnly: auth.readOnly === true
-  })
+  try {
+    const profiles = await listSystemConfigProfiles(auth.user?.id)
+    const target = profiles.find(item => item.isDefault) || profiles[0] || null
+    return Response.json({
+      success: true,
+      config: sanitizeConfigForClient(target?.config || auth.config || {}),
+      role: auth.role || 'admin',
+      readOnly: auth.readOnly === true
+    })
+  } catch (error) {
+    return Response.json(
+      { success: false, error: String(error?.message || error) },
+      { status: 500 }
+    )
+  }
 }
 
 export async function PUT(request) {
@@ -68,9 +79,14 @@ export async function PUT(request) {
   }
 
   try {
-    const userId = String(auth.user?.id || '').trim()
-    const saved = await writeConfigForUser(userId, nextPayload)
-    return Response.json({ success: true, config: sanitizeConfigForClient(saved) })
+    const profiles = await listSystemConfigProfiles(auth.user?.id)
+    const target = profiles.find(item => item.isDefault) || profiles[0] || null
+    if (!target?.id) {
+      throw new Error('系统默认配置不存在')
+    }
+    const saved = await updateSystemConfigProfile(target.id, nextPayload, auth.user?.id, target.name)
+    await activateSystemConfigProfile(target.id, auth.user?.id)
+    return Response.json({ success: true, config: sanitizeConfigForClient(saved.config) })
   } catch (error) {
     return Response.json(
       { success: false, error: String(error?.message || error) },

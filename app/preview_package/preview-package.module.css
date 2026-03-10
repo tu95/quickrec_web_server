@@ -68,10 +68,19 @@
   line-height: 1.62;
 }
 
-.summaryRow {
+.summaryMetaRow {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.summaryCountRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .pill {
@@ -150,11 +159,13 @@
   overflow: hidden;
   display: grid;
   grid-template-rows: auto 1fr;
+  text-align: center;
 }
 
 .cardHead {
   padding: 12px 12px 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  text-align: center;
 }
 
 .cardTitle {
@@ -199,8 +210,18 @@
 .cardBody {
   padding: 12px;
   display: grid;
-  gap: 8px;
+  gap: 12px;
   align-content: start;
+  align-items: center;
+  justify-items: center;
+}
+
+.scanHint {
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 800;
+  color: #f5f0ff;
+  letter-spacing: 0.02em;
 }
 
 .metaLine {
@@ -228,23 +249,19 @@
 }
 
 .qrWrap {
-  border-radius: 12px;
+  border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(255, 255, 255, 0.96);
-  padding: 8px;
+  padding: 12px;
   width: fit-content;
+  margin: 0 auto;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.22);
 }
 
 .qrImage {
-  width: 176px;
-  height: 176px;
+  width: 260px;
+  height: 260px;
   display: block;
-}
-
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 
 .primaryBtn,
@@ -334,5 +351,14 @@
 
   .grid {
     grid-template-columns: 1fr;
+  }
+
+  .scanHint {
+    font-size: 21px;
+  }
+
+  .qrImage {
+    width: min(76vw, 240px);
+    height: min(76vw, 240px);
   }
 }

@@ -1,9 +1,47 @@
 /** @type {import('next').NextConfig} */
 const configuredDistDir = String(process.env.NEXT_DIST_DIR || '').trim()
+const rawAllowedDevOrigins = String(
+  process.env.NEXT_ALLOWED_DEV_ORIGINS ||
+  '127.0.0.1,localhost'
+).trim()
+const appPublicOrigin = String(process.env.APP_PUBLIC_ORIGIN || '').trim()
+
+function normalizeAllowedDevOrigin(value) {
+  const input = String(value || '').trim()
+  if (!input) return ''
+
+  try {
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(input)) {
+      return String(new URL(input).hostname || '').toLowerCase()
+    }
+  } catch {}
+
+  const noProtocol = input.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '')
+  const hostWithMaybePath = noProtocol.split('/')[0] || ''
+  const host = hostWithMaybePath.split(':')[0] || ''
+  return String(host).toLowerCase()
+}
+
+function parseAllowedDevOrigins(raw) {
+  if (!raw) return []
+  const deduped = new Set()
+  for (const item of raw.split(',')) {
+    const normalized = normalizeAllowedDevOrigin(item)
+    if (normalized) deduped.add(normalized)
+  }
+  return Array.from(deduped)
+}
+
+const allowedDevOrigins = parseAllowedDevOrigins(
+  [rawAllowedDevOrigins, appPublicOrigin].filter(Boolean).join(',')
+)
 
 const nextConfig = {
   // 将 dev / build-start 的产物目录隔离，避免 .next 被不同模式污染
   distDir: configuredDistDir || '.next',
+  ...(allowedDevOrigins.length > 0
+    ? { allowedDevOrigins }
+    : {}),
   // 允许来自 Zepp App WebView 的跨域请求
   async headers() {
     return [

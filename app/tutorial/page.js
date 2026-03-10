@@ -5,10 +5,11 @@ export const metadata = {
 export default function TutorialPage() {
   return (
     <main className="page-root" style={{ maxWidth: 760 }}>
-      <section className="hero">
-        <p className="hero-kicker">QuickRec Tutorial</p>
-        <h1 className="hero-title">快速上手教程</h1>
-        <p className="hero-subtitle">按下面的顺序操作，一次就能完成设备绑定与上传验证。</p>
+      <section className="panel panel-dark" style={{ marginBottom: 14 }}>
+        <h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.2 }}>快速上手教程</h1>
+        <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>
+          按下面的顺序操作，一次就能完成设备绑定与上传验证。
+        </p>
       </section>
 
       <section className="panel panel-dark">

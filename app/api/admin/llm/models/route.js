@@ -1,4 +1,5 @@
 import { requireAdminAuth } from '../../../_lib/admin-auth'
+import { getSystemConfigProfileById, mergeConfigWithSecretPreserve } from '../../../_lib/config-store'
 import { fetchModels } from '../../../_lib/llm-client'
 import { logRuntimeError } from '../../../_lib/runtime-log'
 
@@ -17,7 +18,23 @@ export async function POST(request) {
   }
   const body = await request.json().catch(() => null)
   const providerId = String(body?.providerId || '')
-  const provider = findProvider(auth.config, providerId)
+  const profileId = String(body?.profileId || '').trim()
+  const providerFromBody = body?.provider && typeof body.provider === 'object'
+    ? body.provider
+    : null
+  const baseConfig = profileId
+    ? (await getSystemConfigProfileById(profileId, auth.user?.id)).config
+    : auth.config
+  const mergedConfig = providerFromBody
+    ? mergeConfigWithSecretPreserve(baseConfig, {
+        llm: {
+          providers: [providerFromBody]
+        }
+      })
+    : baseConfig
+  const provider = providerFromBody
+    ? findProvider(mergedConfig, String(providerFromBody?.id || providerId))
+    : findProvider(baseConfig, providerId)
   if (!provider) {
     return Response.json(
       { success: false, error: 'provider not found' },
@@ -34,6 +51,7 @@ export async function POST(request) {
   } catch (error) {
     await logRuntimeError('llm.models.fetch_failed', {
       providerId,
+      profileId,
       providerName: provider?.name || '',
       baseUrl: provider?.baseUrl || '',
       error: String(error?.message || error),

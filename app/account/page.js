@@ -8,6 +8,13 @@ export default function AccountPage() {
   const [passwordBusy, setPasswordBusy] = useState(false)
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
+  const [quota, setQuota] = useState({
+    loading: true,
+    error: '',
+    limit: 0,
+    usedCount: 0,
+    remaining: 0
+  })
   const [oldPassword, setOldPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -31,10 +38,35 @@ export default function AccountPage() {
       }
       setEmail(String(data?.user?.email || '').trim())
       setDisplayName(String(data?.user?.displayName || '').trim())
+      await refreshQuota()
     } catch (err) {
       setError(String(err?.message || err))
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function refreshQuota() {
+    try {
+      setQuota(prev => ({ ...prev, loading: true, error: '' }))
+      const res = await fetch('/api/user/quota/meeting-notes', { cache: 'no-store' })
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || `HTTP ${res.status}`)
+      }
+      setQuota({
+        loading: false,
+        error: '',
+        limit: Number(data?.limit || 0),
+        usedCount: Number(data?.usedCount || 0),
+        remaining: Number(data?.remaining || 0)
+      })
+    } catch (err) {
+      setQuota(prev => ({
+        ...prev,
+        loading: false,
+        error: String(err?.message || err)
+      }))
     }
   }
 
@@ -103,17 +135,43 @@ export default function AccountPage() {
 
   return (
     <main className="page-root pair-shell">
-      <section className="hero">
-        <p className="hero-kicker">Account</p>
-        <h1 className="hero-title">账户设置</h1>
-        <p className="hero-subtitle">可在此修改用户名与登录密码。</p>
+      <section className="panel panel-dark" style={{ marginBottom: 14 }}>
+        <h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.2 }}>账户设置</h1>
+        <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>可在此修改用户名与登录密码。</p>
         {email && (
-          <div className="server-pill">
+          <div className="server-pill" style={{ marginTop: 12 }}>
             <span>当前账号</span>
             <code>{email}</code>
           </div>
         )}
+        <div style={quotaCountRowStyle}>
+          <span style={quotaCountTagStyle}>👑 会议纪要次数：</span>
+          <strong style={quotaCountTextStyle}>
+            {quota.loading
+              ? '加载中...'
+              : quota.error
+                ? '加载失败'
+                : `${Math.max(0, quota.remaining)}`}
+          </strong>
+        </div>
       </section>
+
+      {!quota.loading && !quota.error && (
+        <section className="panel panel-dark" style={{ marginBottom: 14 }}>
+          <h3 style={{ marginTop: 0, marginBottom: 10 }}>会议纪要额度</h3>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <div className="server-pill"><span>总额度</span><code>{Math.max(0, quota.limit)}</code></div>
+            <div className="server-pill"><span>已使用</span><code>{Math.max(0, quota.usedCount)}</code></div>
+            <div className="server-pill"><span>剩余</span><code>{Math.max(0, quota.remaining)}</code></div>
+          </div>
+        </section>
+      )}
+
+      {!quota.loading && quota.error && (
+        <div className="ui-notice ui-notice-error" style={{ marginBottom: 14 }}>
+          会议纪要余额加载失败: {quota.error}
+        </div>
+      )}
 
       <section className="panel panel-dark" style={{ marginBottom: 14 }}>
         <h3 style={{ marginTop: 0, marginBottom: 10 }}>修改用户名</h3>
@@ -182,9 +240,36 @@ export default function AccountPage() {
           </button>
         </div>
       </section>
-
       {message && <div className="ui-notice ui-notice-success">{message}</div>}
       {error && <div className="ui-notice ui-notice-error">{error}</div>}
     </main>
   )
+}
+
+const quotaCountRowStyle = {
+  marginTop: 10,
+  width: '100%',
+  minHeight: 52,
+  borderRadius: 14,
+  border: '1px solid rgba(110, 184, 255, 0.35)',
+  background: 'linear-gradient(135deg, rgba(94, 142, 255, 0.22), rgba(117, 233, 255, 0.2))',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+  padding: '10px 14px'
+}
+
+const quotaCountTagStyle = {
+  fontSize: 14,
+  color: '#d9f0ff',
+  fontWeight: 700
+}
+
+const quotaCountTextStyle = {
+  fontSize: 24,
+  lineHeight: 1,
+  letterSpacing: '0.01em',
+  color: '#ffffff',
+  fontWeight: 800
 }

@@ -373,6 +373,7 @@ async function processAsyncUploadJob(job) {
     fileName: outputFileName,
     ossKey: String(uploaded.objectKey || ''),
     ossUrl: uploaded.url || uploaded.signedUrl || '',
+    ossBucket: String(uploaded.bucket || ''),
     sizeBytes: fileBuffer.length,
     durationSec,
     status: 'uploaded'

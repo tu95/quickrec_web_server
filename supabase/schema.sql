@@ -55,6 +55,7 @@ create table if not exists public.recorder_recordings (
   file_name text not null,
   oss_key text not null,
   oss_url text not null,
+  oss_bucket text not null default '',
   size_bytes bigint not null default 0,
   duration_sec integer not null default 0,
   sha256 text not null default '',
@@ -67,6 +68,27 @@ create table if not exists public.recorder_recordings (
 create table if not exists public.recorder_user_configs (
   user_id uuid primary key references auth.users(id) on delete cascade,
   config_json jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.recorder_system_config_profiles (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  config_json jsonb not null default '{}'::jsonb,
+  is_default boolean not null default false,
+  created_by uuid references auth.users(id) on delete set null,
+  updated_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.recorder_user_config_profiles (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  config_json jsonb not null default '{}'::jsonb,
+  is_active boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -95,6 +117,8 @@ alter table public.recorder_pair_codes
 alter table public.recorder_pair_codes
   add constraint recorder_pair_codes_used_by_user_id_fkey
   foreign key (used_by_user_id) references auth.users(id) on delete set null;
+alter table public.recorder_recordings
+  add column if not exists oss_bucket text not null default '';
 create index if not exists idx_recorder_user_devices_user on public.recorder_user_devices(user_id);
 create unique index if not exists uq_recorder_user_devices_active_device
   on public.recorder_user_devices(device_id)
@@ -103,10 +127,21 @@ create index if not exists idx_recorder_device_sessions_device on public.recorde
 create index if not exists idx_recorder_device_sessions_token on public.recorder_device_sessions(session_token);
 create index if not exists idx_recorder_recordings_user on public.recorder_recordings(user_id, created_at desc);
 create index if not exists idx_recorder_recordings_device on public.recorder_recordings(device_id, created_at desc);
+create index if not exists idx_recorder_system_config_profiles_default
+  on public.recorder_system_config_profiles(is_default, updated_at desc);
+create unique index if not exists uq_recorder_system_config_profiles_default
+  on public.recorder_system_config_profiles(is_default)
+  where is_default = true;
+create index if not exists idx_recorder_user_config_profiles_user
+  on public.recorder_user_config_profiles(user_id, updated_at desc);
+create unique index if not exists uq_recorder_user_config_profiles_active
+  on public.recorder_user_config_profiles(user_id)
+  where is_active = true;
 
 alter table public.recorder_user_devices enable row level security;
 alter table public.recorder_recordings enable row level security;
 alter table public.recorder_user_configs enable row level security;
+alter table public.recorder_user_config_profiles enable row level security;
 
 drop policy if exists "user can read own devices" on public.recorder_user_devices;
 create policy "user can read own devices"
@@ -147,6 +182,31 @@ create policy "user can update own configs"
   using ((select auth.uid()) = user_id)
   with check ((select auth.uid()) = user_id);
 
+drop policy if exists "user can read own config profiles" on public.recorder_user_config_profiles;
+create policy "user can read own config profiles"
+  on public.recorder_user_config_profiles
+  for select
+  using ((select auth.uid()) = user_id);
+
+drop policy if exists "user can insert own config profiles" on public.recorder_user_config_profiles;
+create policy "user can insert own config profiles"
+  on public.recorder_user_config_profiles
+  for insert
+  with check ((select auth.uid()) = user_id);
+
+drop policy if exists "user can update own config profiles" on public.recorder_user_config_profiles;
+create policy "user can update own config profiles"
+  on public.recorder_user_config_profiles
+  for update
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+
+drop policy if exists "user can delete own config profiles" on public.recorder_user_config_profiles;
+create policy "user can delete own config profiles"
+  on public.recorder_user_config_profiles
+  for delete
+  using ((select auth.uid()) = user_id);
+
 create table if not exists public.recorder_usage_counters (
   user_id uuid not null references auth.users(id) on delete cascade,
   feature_key text not null,
@@ -158,6 +218,18 @@ create table if not exists public.recorder_usage_counters (
 
 create index if not exists idx_recorder_usage_counters_feature
   on public.recorder_usage_counters(feature_key, updated_at desc);
+
+create table if not exists public.recorder_user_quota_limits (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  feature_key text not null,
+  quota_limit integer not null check (quota_limit > 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, feature_key)
+);
+
+create index if not exists idx_recorder_user_quota_limits_feature
+  on public.recorder_user_quota_limits(feature_key, updated_at desc);
 
 create or replace function public.consume_recorder_quota(
   p_user_id uuid,

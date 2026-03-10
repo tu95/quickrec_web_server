@@ -149,12 +149,13 @@ export default function PairPage() {
 
   return (
     <main className="page-root pair-shell">
-      <section className="hero">
-        <p className="hero-kicker">Pair Device</p>
-        <h1 className="hero-title">手表配对绑定</h1>
-        <p className="hero-subtitle">手表端获取配对码后，在这里完成设备绑定。绑定成功后，上传将归属到你的账号。</p>
+      <section className="panel panel-dark" style={{ marginBottom: 14 }}>
+        <h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.2 }}>手表配对绑定</h1>
+        <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>
+          手表端获取配对码后，在这里完成设备绑定。绑定成功后，上传将归属到你的账号。
+        </p>
         {user?.email && (
-          <div className="server-pill">
+          <div className="server-pill" style={{ marginTop: 12 }}>
             <span>当前账号</span>
             <code>{user.email}</code>
           </div>

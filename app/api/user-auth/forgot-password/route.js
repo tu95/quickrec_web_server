@@ -1,20 +1,7 @@
 import { sendPasswordResetEmail } from '../../_lib/user-auth'
 import { buildAuthSecurityBlockResponse } from '../../_lib/auth-security'
 import { normalizeAuthApiError } from '../../_lib/auth-error-map'
-
-function getRequestOrigin(request) {
-  const forwardedHost = request.headers.get('x-forwarded-host')
-  const forwardedProto = request.headers.get('x-forwarded-proto')
-  if (forwardedHost) {
-    return `${forwardedProto || 'http'}://${forwardedHost}`
-  }
-  const host = request.headers.get('host')
-  if (host) {
-    const proto = forwardedProto || (request.url.startsWith('https://') ? 'https' : 'http')
-    return `${proto}://${host}`
-  }
-  return new URL(request.url).origin
-}
+import { buildPublicUrl } from '../../_lib/public-origin'
 
 export async function POST(request) {
   try {
@@ -33,8 +20,7 @@ export async function POST(request) {
       email
     })
     if (blocked) return blocked
-    const origin = getRequestOrigin(request)
-    await sendPasswordResetEmail(email, `${origin}/login?mode=reset`)
+    await sendPasswordResetEmail(email, buildPublicUrl('/login?mode=reset'))
     return Response.json({
       success: true,
       message: '重置密码邮件已发送，请检查邮箱'

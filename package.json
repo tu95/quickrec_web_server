@@ -12,6 +12,8 @@
     "stop:bg": "node scripts/stop-bg.js",
     "clean": "node scripts/clean-next.js",
     "doctor": "node scripts/doctor.js",
+    "manager": "node scripts/manager.mjs",
+    "ensure:test-user": "node scripts/ensure-test-user.mjs",
     "logs:dev": "sh -c 'tail -f logs/dev.log'",
     "logs:start": "sh -c 'tail -n 200 -f logs/start.log'",
     "logs:supervisor": "sh -c 'tail -n 200 -f logs/supervisor.log'"

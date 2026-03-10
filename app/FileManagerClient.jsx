@@ -72,12 +72,21 @@ function normalizeNoteViewUrl(rawUrl) {
 export default function FileManagerClient({ origin, initialFiles }) {
   const [files, setFiles] = useState(Array.isArray(initialFiles) ? initialFiles : [])
   const [activeTab, setActiveTab] = useState('recording')
+  const [pageSize, setPageSize] = useState(10)
+  const [currentPage, setCurrentPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [busyMap, setBusyMap] = useState({})
   const [noteBusyMap, setNoteBusyMap] = useState({})
   const [noteCancelBusyMap, setNoteCancelBusyMap] = useState({})
   const [noteJobMap, setNoteJobMap] = useState({})
   const [noteErrorLog, setNoteErrorLog] = useState('')
+  const [quotaState, setQuotaState] = useState({
+    loading: true,
+    error: '',
+    limit: 0,
+    usedCount: 0,
+    remaining: 0
+  })
   const [message, setMessage] = useState('')
   const [player, setPlayer] = useState({
     fileId: '',
@@ -95,7 +104,37 @@ export default function FileManagerClient({ origin, initialFiles }) {
   const pollingJobsRef = useRef(new Map())
   const autoOpenJobIdsRef = useRef(new Set())
   const lastPollingErrorRef = useRef('')
+  const downloadFrameRef = useRef(null)
   const meetingPollIntervalMs = 2500
+
+  async function refreshMeetingNotesQuota() {
+    try {
+      setQuotaState(prev => ({ ...prev, loading: true, error: '' }))
+      const res = await fetch('/api/user/quota/meeting-notes', { cache: 'no-store' })
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.success) {
+        const errorText = String(data?.error || `HTTP ${res.status}`)
+        setQuotaState(prev => ({ ...prev, loading: false, error: errorText }))
+        return
+      }
+      const limit = Number(data?.limit || 0)
+      const usedCount = Number(data?.usedCount || 0)
+      const remaining = Number(data?.remaining || 0)
+      setQuotaState({
+        loading: false,
+        error: '',
+        limit: Number.isFinite(limit) ? limit : 0,
+        usedCount: Number.isFinite(usedCount) ? usedCount : 0,
+        remaining: Number.isFinite(remaining) ? remaining : 0
+      })
+    } catch (error) {
+      setQuotaState(prev => ({
+        ...prev,
+        loading: false,
+        error: String(error?.message || error)
+      }))
+    }
+  }
 
   function navigateTo(url) {
     const target = String(url || '').trim()
@@ -104,22 +143,59 @@ export default function FileManagerClient({ origin, initialFiles }) {
     window.location.assign(target)
   }
 
+  function triggerDownload(file) {
+    const fileId = getFileKey(file)
+    if (!fileId) {
+      setMessage('下载失败: 文件标识无效')
+      return
+    }
+    const fileName = String(file?.name || '').trim() || 'recording'
+    const signedUrl = String(file?.downloadUrl || '').trim()
+    const downloadUrl = signedUrl || `/api/files/${encodeURIComponent(fileId)}?download=1`
+    try {
+      if (typeof window === 'undefined' || typeof document === 'undefined') {
+        setMessage('下载失败: 浏览器环境不可用')
+        return
+      }
+      if (downloadFrameRef.current && typeof downloadFrameRef.current.remove === 'function') {
+        try {
+          downloadFrameRef.current.remove()
+        } catch {}
+      }
+
+      const frame = document.createElement('iframe')
+      frame.title = `download-${fileName}`
+      frame.style.display = 'none'
+      frame.style.width = '0'
+      frame.style.height = '0'
+      frame.style.border = '0'
+      frame.src = downloadUrl
+      document.body.appendChild(frame)
+      downloadFrameRef.current = frame
+
+      window.setTimeout(() => {
+        if (downloadFrameRef.current !== frame) return
+        try {
+          frame.remove()
+        } catch {}
+        downloadFrameRef.current = null
+      }, 60_000)
+    } catch (error) {
+      setMessage(`下载失败: ${String(error?.message || error)}`)
+    }
+  }
+
   const grouped = useMemo(() => {
     const recording = []
-    const test = []
     const opusArchive = []
     for (const item of files) {
       if (item && item.ext === '.opus') {
         opusArchive.push(item)
         continue
       }
-      if (item && item.category === 'test') {
-        test.push(item)
-      } else {
-        recording.push(item)
-      }
+      recording.push(item)
     }
-    return { recording, test, opusArchive }
+    return { recording, opusArchive }
   }, [files])
 
   async function refreshFiles() {
@@ -325,6 +401,9 @@ export default function FileManagerClient({ origin, initialFiles }) {
       }
       const deletedText = Array.isArray(data.deleted) ? data.deleted.join(', ') : fileName
       setMessage(`已删除: ${deletedText}`)
+      if (String(player.fileId || '') === fileId) {
+        stopCurrentPlayback()
+      }
       removePollingJob(fileId)
       await refreshFiles()
     } catch (error) {
@@ -364,6 +443,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
       setNoteErrorLog(text)
     } finally {
       setNoteBusy(fileId, false)
+      void refreshMeetingNotesQuota()
     }
   }
 
@@ -479,6 +559,25 @@ export default function FileManagerClient({ origin, initialFiles }) {
     })
   }
 
+  function stopCurrentPlayback() {
+    const audioEl = audioRef.current
+    if (audioEl && typeof audioEl.pause === 'function') {
+      try {
+        audioEl.pause()
+      } catch {}
+    }
+    setPlayer({
+      fileId: '',
+      url: '',
+      label: '',
+      token: Date.now(),
+      playing: false,
+      currentTime: 0,
+      duration: 0,
+      error: ''
+    })
+  }
+
   function seekCurrentPlayback(fileId, nextTimeRaw) {
     const currentFileId = String(player.fileId || '')
     if (!currentFileId || currentFileId !== String(fileId || '')) return
@@ -522,6 +621,10 @@ export default function FileManagerClient({ origin, initialFiles }) {
       stopMeetingPolling()
     }
   }, [files])
+
+  useEffect(() => {
+    void refreshMeetingNotesQuota()
+  }, [])
 
   useEffect(() => {
     function onVisibilityChange() {
@@ -629,21 +732,46 @@ export default function FileManagerClient({ origin, initialFiles }) {
     }
   }, [player.fileId, player.url, player.token])
 
+  useEffect(() => {
+    return () => {
+      if (!downloadFrameRef.current) return
+      try {
+        downloadFrameRef.current.remove()
+      } catch {}
+      downloadFrameRef.current = null
+    }
+  }, [])
+
   function renderActions(file, busy, noteBusy, noteCancelBusy, noteJob) {
     const fileId = getFileKey(file)
-    const fileUrl = String(file?.downloadUrl || file?.streamUrl || '').trim() || `/api/files/${encodeURIComponent(fileId)}`
     const isOpus = file.ext === '.opus'
     const canGenerateNote = isPlayableExt(file.ext) || isOpus
     const inMemoryNoteUrl = noteJob && noteJob.result && noteJob.result.noteUrl ? String(noteJob.result.noteUrl) : ''
     const persistedNoteUrl = file && file.latestNoteUrl ? String(file.latestNoteUrl) : ''
     const noteViewUrl = normalizeNoteViewUrl(inMemoryNoteUrl || persistedNoteUrl)
 
+    const secondaryMessages = []
+    if (isOpus) {
+      secondaryMessages.push('归档兜底文件（仅恢复使用）')
+    }
+    if (noteJob) {
+      secondaryMessages.push(
+        noteJob.status === 'completed'
+          ? '纪要已完成'
+          : noteJob.status === 'cancelled'
+            ? '纪要已取消'
+            : noteJob.status === 'failed'
+              ? `失败: ${noteJob.error || '未知错误'}`
+              : `处理中: ${noteJob.stage || noteJob.status}`
+      )
+    }
+
     return (
       <div style={actionBlockStyle}>
         <div style={actionPrimaryRowStyle}>
         {isOpus ? (
           <>
-            <a href={fileUrl} download style={linkStyle} className="file-action-link">下载OPUS</a>
+            <button type="button" onClick={() => triggerDownload(file)} style={linkStyle} className="file-action-link">下载OPUS</button>
             <button
               style={actionBtnStyle}
               className="file-action-btn"
@@ -652,10 +780,9 @@ export default function FileManagerClient({ origin, initialFiles }) {
             >
               {busy ? '转换中...' : '转换到MP3'}
             </button>
-            <span style={disabledHintStyle} className="file-disabled-hint">归档兜底文件（仅恢复使用）</span>
           </>
         ) : (
-          <a href={fileUrl} download style={linkStyle} className="file-action-link">下载</a>
+          <button type="button" onClick={() => triggerDownload(file)} style={linkStyle} className="file-action-link">下载</button>
         )}
         {canGenerateNote && (
           <button
@@ -695,31 +822,60 @@ export default function FileManagerClient({ origin, initialFiles }) {
           删除
         </button>
         </div>
-        {noteJob && (
+        {secondaryMessages.length > 0 && (
           <div style={statusRowStyle}>
-            <span style={statusBadgeStyle}>
-              {noteJob.status === 'completed'
-                ? '纪要已完成'
-                : noteJob.status === 'cancelled'
-                  ? '纪要已取消'
-                : noteJob.status === 'failed'
-                  ? `失败: ${noteJob.error || '未知错误'}`
-                  : `处理中: ${noteJob.stage || noteJob.status}`}
-            </span>
+            {secondaryMessages.map((text, index) => (
+              <span key={`${fileId}__status_${index}`} style={statusBadgeStyle}>
+                {text}
+              </span>
+            ))}
           </div>
         )}
       </div>
     )
   }
 
-  const list = activeTab === 'test'
-    ? grouped.test
-    : (activeTab === 'opus_archive' ? grouped.opusArchive : grouped.recording)
+  const list = activeTab === 'opus_archive' ? grouped.opusArchive : grouped.recording
+  const totalPages = Math.max(1, Math.ceil(list.length / pageSize))
+  const safeCurrentPage = Math.max(1, Math.min(currentPage, totalPages))
+  const pageStart = (safeCurrentPage - 1) * pageSize
+  const pageEnd = pageStart + pageSize
+  const pagedList = list.slice(pageStart, pageEnd)
+  const quotaValueText = quotaState.loading
+    ? '加载中...'
+    : quotaState.error
+      ? '加载失败'
+      : String(Math.max(0, quotaState.remaining))
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [activeTab, pageSize])
+
+  useEffect(() => {
+    if (currentPage !== safeCurrentPage) {
+      setCurrentPage(safeCurrentPage)
+    }
+  }, [currentPage, safeCurrentPage])
+
+  useEffect(() => {
+    const playingFileId = String(player.fileId || '')
+    if (!playingFileId) return
+    const existsInCurrentPage = pagedList.some(item => String(getFileKey(item) || '') === playingFileId)
+    if (!existsInCurrentPage) {
+      stopCurrentPlayback()
+    }
+  }, [pagedList, player.fileId])
 
   return (
     <>
       <div className="file-toolbar" style={{ marginBottom: 14, color: '#35575d', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-        <div>共 {files.length} 个文件</div>
+        <div style={{ display: 'grid', gap: 4 }}>
+          <div>共 {files.length} 个文件</div>
+          <div style={quotaUnifiedPillStyle}>
+            <span style={quotaUnifiedLabelStyle}>👑 会议纪要次数：</span>
+            <strong style={quotaUnifiedValueStyle}>{quotaValueText}</strong>
+          </div>
+        </div>
         <button onClick={refreshFiles} style={refreshBtnStyle} className="file-refresh-btn" disabled={loading}>
           {loading ? '刷新中...' : '刷新列表'}
         </button>
@@ -734,19 +890,53 @@ export default function FileManagerClient({ origin, initialFiles }) {
           录音文件 ({grouped.recording.length})
         </button>
         <button
-          onClick={() => setActiveTab('test')}
-          style={activeTab === 'test' ? tabActiveStyle : tabStyle}
-          className="file-tab-btn"
-        >
-          测试文件 ({grouped.test.length})
-        </button>
-        <button
           onClick={() => setActiveTab('opus_archive')}
           style={activeTab === 'opus_archive' ? tabActiveStyle : tabStyle}
           className="file-tab-btn"
         >
           OPUS归档 ({grouped.opusArchive.length})
         </button>
+      </div>
+      <div style={paginationToolbarStyle}>
+        <div style={paginationInfoStyle}>
+          当前显示 {list.length === 0 ? 0 : pageStart + 1}-{Math.min(pageEnd, list.length)} / {list.length}
+        </div>
+        <div style={paginationControlsStyle}>
+          <label style={pageSizeLabelStyle} htmlFor="file-page-size-select">每页</label>
+          <select
+            id="file-page-size-select"
+            value={pageSize}
+            onChange={(event) => {
+              const next = Number(event.target.value)
+              if (!Number.isFinite(next) || next <= 0) return
+              setPageSize(next)
+            }}
+            style={pageSizeSelectStyle}
+          >
+            <option value={10}>10</option>
+            <option value={20}>20</option>
+            <option value={50}>50</option>
+          </select>
+          <button
+            type="button"
+            style={pageBtnStyle}
+            className="file-tab-btn"
+            disabled={safeCurrentPage <= 1}
+            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+          >
+            上一页
+          </button>
+          <span style={pageNumberStyle}>第 {safeCurrentPage} / {totalPages} 页</span>
+          <button
+            type="button"
+            style={pageBtnStyle}
+            className="file-tab-btn"
+            disabled={safeCurrentPage >= totalPages}
+            onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+          >
+            下一页
+          </button>
+        </div>
       </div>
       <audio
         key={`${player.url}#${player.token}`}
@@ -784,7 +974,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
               </tr>
             </thead>
             <tbody>
-              {list.map((file) => {
+              {pagedList.map((file) => {
                 const fileId = getFileKey(file)
                 if (!fileId) return null
                 const busy = !!busyMap[fileId]
@@ -882,7 +1072,7 @@ const actionBlockStyle = {
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'flex-start',
-  gap: 6,
+  gap: 8,
   width: '100%'
 }
 
@@ -890,11 +1080,16 @@ const actionPrimaryRowStyle = {
   display: 'flex',
   alignItems: 'center',
   flexWrap: 'wrap',
-  gap: 8
+  gap: 8,
+  width: '100%'
 }
 
 const statusRowStyle = {
-  width: '100%'
+  width: '100%',
+  display: 'flex',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  gap: 6
 }
 
 const tableStyle = {
@@ -967,13 +1162,20 @@ const fileNameSubtleStyle = {
 }
 
 const linkStyle = {
-  color: '#0e6f8a',
+  color: '#245a67',
   textDecoration: 'none',
-  marginRight: 8,
   fontSize: 13,
   fontWeight: 700,
-  padding: '10px 0',
-  minHeight: 44
+  padding: '10px 14px',
+  minHeight: 44,
+  width: 142,
+  borderRadius: 999,
+  border: '1px solid rgba(23, 88, 97, 0.35)',
+  background: 'linear-gradient(180deg, #ffffff 0%, #f3fbfd 100%)',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  lineHeight: 1.2
 }
 
 const disabledHintStyle = {
@@ -994,8 +1196,13 @@ const actionBtnStyle = {
   borderRadius: 999,
   padding: '10px 14px',
   minHeight: 44,
+  width: 142,
   cursor: 'pointer',
-  fontWeight: 700
+  fontWeight: 700,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  lineHeight: 1.2
 }
 
 const playBtnStyle = {
@@ -1033,8 +1240,13 @@ const deleteBtnStyle = {
   borderRadius: 999,
   padding: '10px 14px',
   minHeight: 44,
+  width: 142,
   cursor: 'pointer',
-  fontWeight: 700
+  fontWeight: 700,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  lineHeight: 1.2
 }
 
 const noteBtnStyle = {
@@ -1045,8 +1257,13 @@ const noteBtnStyle = {
   borderRadius: 999,
   padding: '10px 14px',
   minHeight: 44,
+  width: 142,
   cursor: 'pointer',
-  fontWeight: 700
+  fontWeight: 700,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  lineHeight: 1.2
 }
 
 const cancelNoteBtnStyle = {
@@ -1057,8 +1274,13 @@ const cancelNoteBtnStyle = {
   borderRadius: 999,
   padding: '10px 14px',
   minHeight: 44,
+  width: 142,
   cursor: 'pointer',
-  fontWeight: 700
+  fontWeight: 700,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  lineHeight: 1.2
 }
 
 const statusBadgeStyle = {
@@ -1068,10 +1290,38 @@ const statusBadgeStyle = {
   background: 'rgba(255,255,255,0.8)',
   borderRadius: 999,
   padding: '7px 10px',
-  maxWidth: '100%',
+  maxWidth: 'calc(100% - 2px)',
   whiteSpace: 'normal',
   wordBreak: 'break-word',
   lineHeight: 1.45
+}
+
+const quotaUnifiedPillStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 10,
+  width: 'fit-content',
+  minHeight: 38,
+  borderRadius: 999,
+  border: '1px solid rgba(40, 123, 191, 0.38)',
+  background: 'linear-gradient(135deg, rgba(120, 209, 255, 0.28), rgba(93, 119, 232, 0.2))',
+  padding: '6px 14px',
+  boxShadow: '0 6px 14px rgba(34, 80, 132, 0.18)'
+}
+
+const quotaUnifiedLabelStyle = {
+  fontSize: 16,
+  color: '#27506f',
+  fontWeight: 700,
+  letterSpacing: '0.01em',
+  lineHeight: 1.1
+}
+
+const quotaUnifiedValueStyle = {
+  fontSize: 24,
+  lineHeight: 1,
+  color: '#164768',
+  fontWeight: 800
 }
 
 const tabStyle = {
@@ -1092,6 +1342,59 @@ const tabActiveStyle = {
   background: 'linear-gradient(135deg, rgba(8, 142, 135, 0.19), rgba(246, 178, 84, 0.2))',
   color: '#194f55',
   boxShadow: '0 4px 12px rgba(30, 79, 83, 0.12)'
+}
+
+const paginationToolbarStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 10,
+  flexWrap: 'wrap',
+  marginBottom: 10,
+  padding: '8px 2px'
+}
+
+const paginationInfoStyle = {
+  fontSize: 12,
+  color: '#4f6f76'
+}
+
+const paginationControlsStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  flexWrap: 'wrap'
+}
+
+const pageSizeLabelStyle = {
+  fontSize: 12,
+  color: '#48656c',
+  fontWeight: 600
+}
+
+const pageSizeSelectStyle = {
+  minHeight: 34,
+  borderRadius: 10,
+  border: '1px solid rgba(39, 74, 80, 0.24)',
+  background: 'rgba(255,255,255,0.9)',
+  color: '#25464d',
+  padding: '6px 10px',
+  fontSize: 13,
+  fontWeight: 600
+}
+
+const pageBtnStyle = {
+  ...tabStyle,
+  minHeight: 34,
+  padding: '6px 10px',
+  fontSize: 12
+}
+
+const pageNumberStyle = {
+  fontSize: 12,
+  color: '#31555e',
+  fontWeight: 600,
+  padding: '0 2px'
 }
 
 const emptyStyle = {

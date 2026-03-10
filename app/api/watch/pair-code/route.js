@@ -58,8 +58,6 @@ export async function POST(request) {
       expiresAt: String(result.expiresAt || ''),
       alreadyPaired: result.alreadyPaired === true,
       status: String(result.status || ''),
-      sessionToken: String(result.sessionToken || ''),
-      sessionExpiresAt: String(result.sessionExpiresAt || ''),
       bindPath: '/pair'
     })
   } catch (error) {

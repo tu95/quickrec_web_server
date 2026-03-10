@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs'
 import { join } from 'path'
+import { requireUserAuth } from '../_lib/user-auth'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const CORS_HEADERS = {
@@ -48,6 +49,14 @@ function normalizeBase64(data) {
 
 export async function POST(request) {
   try {
+    const auth = await requireUserAuth(request)
+    if (!auth?.ok) {
+      return Response.json(
+        { success: false, error: String(auth?.error || '未登录') },
+        { status: Number(auth?.status) || 401, headers: CORS_HEADERS }
+      )
+    }
+
     await ensureUploadDir()
     const body = await request.json().catch(() => null)
     if (!body || typeof body !== 'object') {

@@ -2,7 +2,7 @@ import { promises as fs } from 'fs'
 import { extname, join } from 'path'
 import { requireSiteAuth } from '../../_lib/admin-auth'
 import { readConfigForUser } from '../../_lib/config-store'
-import { deleteOssObject, signOssObjectUrl } from '../../_lib/oss-storage'
+import { deleteOssObject, getOssObject } from '../../_lib/oss-storage'
 import {
   deleteUserRecordingById,
   getUserRecordingById
@@ -19,16 +19,18 @@ function normalizeRecordingId(raw) {
   return String(raw || '').trim()
 }
 
-function buildDirectDownloadUrl(recording, config) {
-  const key = String(recording?.oss_key || '').trim()
-  const direct = String(recording?.oss_url || '').trim()
-  if (key && config) {
-    const signed = signOssObjectUrl(config, key, {
-      signedUrlExpiresSec: config?.aliyun?.oss?.asrSignedUrlExpiresSec
-    })
-    return String(signed?.signedUrl || signed?.url || direct)
+function getContentType(fileName) {
+  const ext = String(fileName || '').toLowerCase().split('.').pop()
+  const types = {
+    mp3: 'audio/mpeg',
+    opus: 'audio/opus',
+    wav: 'audio/wav',
+    m4a: 'audio/mp4',
+    txt: 'text/plain',
+    json: 'application/json',
+    pdf: 'application/pdf'
   }
-  return direct
+  return types[ext] || 'application/octet-stream'
 }
 
 async function cleanupLocalLegacyFile(fileName) {
@@ -67,6 +69,9 @@ export async function GET(request, { params }) {
   }
 
   try {
+    const requestUrl = new URL(request.url)
+    const downloadParam = String(requestUrl.searchParams.get('download') || '').trim().toLowerCase()
+    const asAttachment = downloadParam === '1' || downloadParam === 'true'
     const recording = await getUserRecordingById(userId, recordingId)
     if (!recording) {
       return Response.json(
@@ -74,19 +79,36 @@ export async function GET(request, { params }) {
         { status: 404, headers: CORS_HEADERS }
       )
     }
-    const config = await readConfigForUser(userId)
-    const targetUrl = buildDirectDownloadUrl(recording, config)
-    if (!targetUrl) {
+
+    const ossKey = String(recording?.oss_key || '').trim()
+    const ossBucket = String(recording?.oss_bucket || '').trim()
+    if (!ossKey) {
       return Response.json(
-        { success: false, error: '文件下载地址不可用' },
+        { success: false, error: '文件不存在' },
         { status: 404, headers: CORS_HEADERS }
       )
     }
-    return new Response(null, {
-      status: 302,
+
+    const config = await readConfigForUser(userId)
+    const ossResult = await getOssObject(config, ossKey, { ossBucket })
+
+    if (!ossResult) {
+      return Response.json(
+        { success: false, error: '文件不存在' },
+        { status: 404, headers: CORS_HEADERS }
+      )
+    }
+
+    const fileName = String(recording?.file_name || recordingId)
+    const contentType = getContentType(fileName)
+
+    return new Response(ossResult.content, {
+      status: 200,
       headers: {
         ...CORS_HEADERS,
-        Location: targetUrl
+        'Content-Type': contentType,
+        'Content-Disposition': `${asAttachment ? 'attachment' : 'inline'}; filename="${encodeURIComponent(fileName)}"`,
+        'Cache-Control': 'public, max-age=3600'
       }
     })
   } catch (error) {
@@ -126,8 +148,9 @@ export async function DELETE(request, { params }) {
 
     const config = await readConfigForUser(userId)
     const ossKey = String(recording?.oss_key || '').trim()
+    const ossBucket = String(recording?.oss_bucket || '').trim()
     if (ossKey) {
-      await deleteOssObject(config, ossKey)
+      await deleteOssObject(config, ossKey, { ossBucket })
     }
 
     const deleted = await deleteUserRecordingById(userId, recordingId)

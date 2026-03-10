@@ -20,8 +20,23 @@ cp .env.example .env.local
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`（或 `SUPABASE_PUBLISHABLE_KEY`）
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `APP_PUBLIC_ORIGIN`（本地开发请固定为 `http://localhost:3000`）
+
+建议同时配置以下安全变量（本地默认值）：
+- `TRUST_PROXY=false`
+- `TRUST_PROXY_CIDRS=`（留空）
+- `COOKIE_SECURE=false`（本地 http 必须为 false）
+- `USER_SESSION_TTL_SEC=86400`（登录态默认 24h）
+- `SUPABASE_AUTH_TIMEOUT_MS=3200`（Auth 请求超时）
+- `SUPABASE_AUTH_RETRY_MAX=2`（Auth 网络失败重试次数）
+- `SUPABASE_AUTH_RETRY_DELAY_MS=180`（Auth 重试间隔毫秒）
 
 配对码默认有效期为 `1小时`（`PAIR_CODE_TTL_SEC=3600`），可按需在 `.env.local` 调整。
+也支持别名变量 `PAIR_TTL_SECONDS=3600`（优先生效）。
+配对失败保护默认值：
+- `PAIR_MAX_FAILS=30`
+- `PAIR_LOCK_SECONDS=180`
+
 手机到服务端分片上传支持批量模式，默认每次请求 `1024KB`：
 - `WATCH_UPLOAD_BATCH_MAX_BYTES=1048576`
 - `WATCH_UPLOAD_BATCH_MAX_CHUNKS=16`
@@ -43,6 +58,17 @@ npm run dev
 ```
 服务器默认监听 `3000` 端口（例如 `http://你的IP:3000`）。  
 如果你做了反向代理/公网映射，请在 Zepp 端填写你的实际公网地址与端口。
+
+若开发时出现 `Invalid hook call` / `Cannot read properties of null (reading 'useContext')`：
+
+```bash
+npm run clean
+npm run dev
+```
+
+并确认：
+- `APP_PUBLIC_ORIGIN=http://localhost:3000`
+- 浏览器使用同一域名访问（避免在 `localhost` 和 `127.0.0.1` 间来回切换）
 
 ### 3. 生产模式（后台 + 崩溃诊断）
 
@@ -207,3 +233,14 @@ npm i opusscript
 
 - `UPLOAD_DIR`: 文件保存路径
 - `maxFilesSize`: 最大文件大小（默认 50MB）
+
+<!-- TEST_USER_CREDENTIALS_START -->
+## 普通用户测试账号（自动维护）
+
+- 邮箱: `test@test.com`
+- 密码: `t4E5V25iN1fzfZBBjC6DeAA!9`
+- 权限: 普通用户（非管理员）
+- 用途: 每次联调/回归时使用该账号从普通用户视角测试
+
+> 如需重置：在 `web_server` 目录执行 `npm run ensure:test-user`。
+<!-- TEST_USER_CREDENTIALS_END -->

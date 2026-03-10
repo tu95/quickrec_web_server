@@ -20,58 +20,58 @@ function safeText(input, fallback = '-') {
   return value || fallback
 }
 
-function normalizedText(item) {
-  return [
-    item?.model,
-    item?.target,
-    item?.resolvedTarget,
-  ].join(' ').toLowerCase()
-}
-
 export default function PreviewPackageClient({ initialPayload }) {
   const payload = initialPayload && typeof initialPayload === 'object'
     ? initialPayload
-    : { generatedAt: '', totalCount: 0, successCount: 0, failureCount: 0, entries: [], error: '' }
-  const [keyword, setKeyword] = useState('')
-  const [copiedUrl, setCopiedUrl] = useState('')
+    : { version: '', generatedAt: '', totalCount: 0, successCount: 0, failureCount: 0, entries: [], error: '' }
+  const [selectedDevice, setSelectedDevice] = useState('')
 
-  const filteredEntries = useMemo(() => {
-    const list = asArray(payload.entries)
-    const q = keyword.trim().toLowerCase()
-    if (!q) return list
-    return list.filter(item => normalizedText(item).includes(q))
-  }, [payload.entries, keyword])
+  // 获取所有可用设备列表（按 model 去重）
+  const deviceOptions = useMemo(() => {
+    const map = new Map()
+    asArray(payload.entries).forEach(item => {
+      const model = safeText(item.model)
+      if (model && model !== '-') {
+        map.set(model, item)
+      }
+    })
+    return Array.from(map.values()).sort((a, b) =>
+      safeText(a.model).localeCompare(safeText(b.model))
+    )
+  }, [payload.entries])
 
-  async function copyLink(url) {
-    const value = String(url || '').trim()
-    if (!value) return
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopiedUrl(value)
-      setTimeout(() => {
-        setCopiedUrl(current => (current === value ? '' : current))
-      }, 1400)
-    } catch (error) {
-      alert(`复制失败: ${String(error?.message || error)}`)
-    }
-  }
+  // 当前选中的设备详情
+  const selectedEntry = useMemo(() => {
+    if (!selectedDevice) return null
+    return deviceOptions.find(item => safeText(item.model) === selectedDevice) || null
+  }, [selectedDevice, deviceOptions])
 
   return (
     <>
-      <section className={styles.summaryRow}>
+      <section className={styles.summaryMetaRow}>
+        <div className={styles.pill}>安装包版本: <strong>{safeText(payload.version)}</strong></div>
         <div className={styles.pill}>更新时间: <strong>{formatDateTime(payload.generatedAt)}</strong></div>
+      </section>
+
+      <section className={styles.summaryCountRow}>
         <div className={styles.pill}>成功: <strong>{Number(payload.successCount || 0)}</strong></div>
         <div className={styles.pill}>失败: <strong>{Number(payload.failureCount || 0)}</strong></div>
         <div className={styles.pill}>总数: <strong>{Number(payload.totalCount || 0)}</strong></div>
       </section>
 
       <section className={styles.searchWrap}>
-        <input
+        <select
           className={styles.searchInput}
-          value={keyword}
-          onChange={e => setKeyword(e.target.value)}
-          placeholder="搜索机型 / target"
-        />
+          value={selectedDevice}
+          onChange={e => setSelectedDevice(e.target.value)}
+        >
+          <option value="">请选择设备型号</option>
+          {deviceOptions.map(item => (
+            <option key={safeText(item.model)} value={safeText(item.model)}>
+              {safeText(item.model)} ({safeText(item.target)})
+            </option>
+          ))}
+        </select>
       </section>
 
       {payload.error ? (
@@ -80,82 +80,32 @@ export default function PreviewPackageClient({ initialPayload }) {
         </section>
       ) : null}
 
-      {filteredEntries.length === 0 ? (
-        <section className={styles.emptyCard}>暂无结果。先在本地执行 `npm run preview:packages` 生成数据。</section>
-      ) : (
-        <section className={styles.grid}>
-          {filteredEntries.map((item, index) => {
-            const key = `${safeText(item.model, 'model')}-${safeText(item.target, 'target')}-${index}`
-            const success = String(item.status || '').toLowerCase() === 'success'
-            const logSnippet = asArray(item.logSnippet)
-            const resolveNote = safeText(item.resolveNote, '')
-            const suggested = asArray(item.suggestedTargets)
+      {!payload.error && !selectedDevice && deviceOptions.length > 0 ? (
+        <section className={styles.emptyCard}>请从上方选择设备型号，查看安装二维码</section>
+      ) : null}
 
-            return (
-              <article key={key} className={styles.card}>
-                <header className={styles.cardHead}>
-                  <h3 className={styles.cardTitle}>{safeText(item.model, '未知机型')}</h3>
-                  <div className={styles.cardSub}>target: {safeText(item.target)}</div>
-                  {item.resolvedTarget ? (
-                    <div className={styles.cardSub}>resolved: {safeText(item.resolvedTarget)}</div>
-                  ) : null}
-                  <span className={success ? styles.okBadge : styles.failBadge}>
-                    {success ? '可安装' : '生成失败'}
-                  </span>
-                </header>
+      {selectedEntry && (
+        <section className={styles.card}>
+          <header className={styles.cardHead}>
+            <h3 className={styles.cardTitle}>{safeText(selectedEntry.model, '未知机型')}</h3>
+            <div className={styles.cardSub}>target: {safeText(selectedEntry.target)}</div>
+            {selectedEntry.resolvedTarget ? (
+              <div className={styles.cardSub}>resolved: {safeText(selectedEntry.resolvedTarget)}</div>
+            ) : null}
+            <span className={styles.okBadge}>可安装</span>
+          </header>
 
-                <div className={styles.cardBody}>
-                  {resolveNote ? (
-                    <div className={styles.resolveHint}>解析: {resolveNote}</div>
-                  ) : null}
-
-                  {success && item.qrCodePath ? (
-                    <div className={styles.qrWrap}>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={String(item.qrCodePath)} alt={`QR for ${safeText(item.model, 'device')}`} className={styles.qrImage} />
-                    </div>
-                  ) : null}
-
-                  <div className={styles.actions}>
-                    {success && item.installUrl ? (
-                      <>
-                        <a
-                          className={styles.primaryBtn}
-                          href={String(item.installUrl)}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          打开安装链接
-                        </a>
-                        <button
-                          type="button"
-                          className={copiedUrl === item.installUrl ? styles.copyBtnDone : styles.copyBtn}
-                          onClick={() => copyLink(item.installUrl)}
-                        >
-                          {copiedUrl === item.installUrl ? '已复制' : '复制链接'}
-                        </button>
-                      </>
-                    ) : null}
-                    {!success && item.logFile ? (
-                      <a className={styles.logBtn} href={String(item.logFile)} target="_blank" rel="noreferrer">
-                        查看完整日志
-                      </a>
-                    ) : null}
-                  </div>
-
-                  {!success && item.error ? (
-                    <div className={styles.errorText}>错误: {safeText(item.error)}</div>
-                  ) : null}
-                  {!success && suggested.length > 0 ? (
-                    <div className={styles.suggestText}>建议 target: {suggested.join(' | ')}</div>
-                  ) : null}
-                  {!success && logSnippet.length > 0 ? (
-                    <pre className={styles.logPre}>{logSnippet.join('\n')}</pre>
-                  ) : null}
-                </div>
-              </article>
-            )
-          })}
+          <div className={styles.cardBody}>
+            <div className={styles.scanHint}>扫码安装</div>
+            {selectedEntry.qrCodePath ? (
+              <div className={styles.qrWrap}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={String(selectedEntry.qrCodePath)} alt={`QR for ${safeText(selectedEntry.model, 'device')}`} className={styles.qrImage} />
+              </div>
+            ) : (
+              <div className={styles.errorText}>二维码暂不可用</div>
+            )}
+          </div>
         </section>
       )}
     </>

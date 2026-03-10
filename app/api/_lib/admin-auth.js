@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import { readConfigForUser } from './config-store'
 import { requireUserAuth } from './user-auth'
+import { getCookieSecureSuffix } from './cookie-security'
 
 const SITE_COOKIE_NAME = 'zr_site_session'
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7
@@ -22,7 +23,7 @@ function getAdminEmailSet() {
   )
 }
 
-function isAdminUser(user) {
+export function isAdminUser(user) {
   const email = normalizeEmail(user?.email)
   if (!email) return false
   const admins = getAdminEmailSet()
@@ -71,11 +72,11 @@ function parseCookiesFromHeader(cookieHeader) {
 
 export function buildSiteSessionCookie(token) {
   const maxAge = Math.floor(SESSION_TTL_MS / 1000)
-  return `${SITE_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`
+  return `${SITE_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax${getCookieSecureSuffix()}; Max-Age=${maxAge}`
 }
 
 export function buildClearSiteSessionCookie() {
-  return `${SITE_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
+  return `${SITE_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax${getCookieSecureSuffix()}; Max-Age=0`
 }
 
 export function createSiteToken(key, role = 'admin') {

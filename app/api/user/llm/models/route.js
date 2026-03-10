@@ -1,0 +1,66 @@
+import { requireSiteAuth } from '../../../_lib/admin-auth'
+import { getUserConfigProfileById, mergeConfigWithSecretPreserve } from '../../../_lib/config-store'
+import { fetchModels } from '../../../_lib/llm-client'
+import { logRuntimeError } from '../../../_lib/runtime-log'
+
+function findProvider(config, providerId) {
+  const list = Array.isArray(config?.llm?.providers) ? config.llm.providers : []
+  return list.find(item => String(item?.id || '') === String(providerId || ''))
+}
+
+export async function POST(request) {
+  const auth = await requireSiteAuth(request)
+  if (!auth.ok) {
+    return Response.json(
+      { success: false, error: auth.error },
+      { status: auth.status }
+    )
+  }
+  const body = await request.json().catch(() => null)
+  const providerId = String(body?.providerId || '')
+  const profileId = String(body?.profileId || '').trim()
+  const providerFromBody = body?.provider && typeof body.provider === 'object'
+    ? body.provider
+    : null
+  const baseConfig = profileId
+    ? (await getUserConfigProfileById(auth.user?.id, profileId)).config
+    : auth.config
+  const mergedConfig = providerFromBody
+    ? mergeConfigWithSecretPreserve(baseConfig, {
+        llm: {
+          providers: [providerFromBody]
+        }
+      })
+    : baseConfig
+  const provider = providerFromBody
+    ? findProvider(mergedConfig, String(providerFromBody?.id || providerId))
+    : findProvider(baseConfig, providerId)
+  if (!provider) {
+    return Response.json(
+      { success: false, error: 'provider not found' },
+      { status: 404 }
+    )
+  }
+  try {
+    const models = await fetchModels(provider)
+    return Response.json({
+      success: true,
+      providerId,
+      models
+    })
+  } catch (error) {
+    await logRuntimeError('user.llm.models.fetch_failed', {
+      providerId,
+      profileId,
+      providerName: provider?.name || '',
+      baseUrl: provider?.baseUrl || '',
+      userId: String(auth.user?.id || ''),
+      error: String(error?.message || error),
+      stack: error?.stack ? String(error.stack) : ''
+    })
+    return Response.json(
+      { success: false, error: String(error?.message || error) },
+      { status: 500 }
+    )
+  }
+}

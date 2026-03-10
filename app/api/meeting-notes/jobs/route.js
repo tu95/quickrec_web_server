@@ -22,28 +22,26 @@ export async function POST(request) {
     )
   }
 
-  if (auth.role !== 'admin') {
-    try {
-      const quota = await consumeMeetingNotesQuota(String(auth.user?.id || ''))
-      if (!quota.allowed) {
-        return Response.json(
-          {
-            success: false,
-            error: quota.message,
-            code: QUOTA_EXCEEDED_CODE,
-            limit: quota.limit,
-            usedCount: quota.usedCount,
-            remaining: quota.remaining
-          },
-          { status: 403 }
-        )
-      }
-    } catch (error) {
+  try {
+    const quota = await consumeMeetingNotesQuota(String(auth.user?.id || ''))
+    if (!quota.allowed) {
       return Response.json(
-        { success: false, error: String(error?.message || error) },
-        { status: 503 }
+        {
+          success: false,
+          error: quota.message,
+          code: QUOTA_EXCEEDED_CODE,
+          limit: quota.limit,
+          usedCount: quota.usedCount,
+          remaining: quota.remaining
+        },
+        { status: 403 }
       )
     }
+  } catch (error) {
+    return Response.json(
+      { success: false, error: String(error?.message || error) },
+      { status: 503 }
+    )
   }
 
   try {

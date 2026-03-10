@@ -1,16 +1,16 @@
 import OSS from 'ali-oss'
 import { requireAdminAuth } from '../../../../_lib/admin-auth'
-import { mergeConfigWithSecretPreserve } from '../../../../_lib/config-store'
+import { getSystemConfigProfileById, mergeConfigWithSecretPreserve } from '../../../../_lib/config-store'
 import { logRuntimeError } from '../../../../_lib/runtime-log'
 import { validateOssConfig } from '../../../../../../lib/aliyun-validators'
 
 export const runtime = 'nodejs'
 
-function pickAliyunConfig(body, authConfig) {
+function pickAliyunConfig(body, baseConfig) {
   if (body?.aliyun && typeof body.aliyun === 'object') {
-    return mergeConfigWithSecretPreserve(authConfig, { aliyun: body.aliyun }).aliyun || {}
+    return mergeConfigWithSecretPreserve(baseConfig, { aliyun: body.aliyun }).aliyun || {}
   }
-  return authConfig?.aliyun || {}
+  return baseConfig?.aliyun || {}
 }
 
 export async function POST(request) {
@@ -20,7 +20,11 @@ export async function POST(request) {
   }
 
   const body = await request.json().catch(() => null)
-  const aliyun = pickAliyunConfig(body, auth.config)
+  const profileId = String(body?.profileId || '').trim()
+  const baseConfig = profileId
+    ? (await getSystemConfigProfileById(profileId, auth.user?.id)).config
+    : auth.config
+  const aliyun = pickAliyunConfig(body, baseConfig)
   const oss = aliyun?.oss || {}
   const validation = validateOssConfig(oss)
   if (!validation.valid) {
@@ -67,6 +71,7 @@ export async function POST(request) {
     await logRuntimeError('aliyun.oss.test.failed', {
       error: String(error?.message || error),
       stack: error?.stack ? String(error.stack) : '',
+      profileId,
       region: String(validation.normalized?.region || ''),
       bucket: String(validation.normalized?.bucket || ''),
       endpoint: String(validation.normalized?.endpoint || '')

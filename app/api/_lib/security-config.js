@@ -20,6 +20,31 @@ function readIntEnv(name, fallback, min, max) {
   return value
 }
 
+function readIntEnvAny(names, fallback, min, max) {
+  const list = Array.isArray(names) ? names : [names]
+  for (const name of list) {
+    const key = String(name || '').trim()
+    if (!key) continue
+    const raw = readEnv(key)
+    if (!raw) continue
+    return readIntEnv(key, fallback, min, max)
+  }
+  const parsed = Number(fallback)
+  let value = Number.isFinite(parsed) ? Math.floor(parsed) : 0
+  if (Number.isFinite(min)) value = Math.max(value, Number(min))
+  if (Number.isFinite(max)) value = Math.min(value, Number(max))
+  return value
+}
+
+function readCsvEnv(name) {
+  const raw = readEnv(name)
+  if (!raw) return []
+  return raw
+    .split(',')
+    .map(item => String(item || '').trim())
+    .filter(Boolean)
+}
+
 export function getSecurityConfig() {
   const turnstileSiteKey = readEnv('NEXT_PUBLIC_TURNSTILE_SITE_KEY')
   const turnstileEnabled = readBoolEnv(
@@ -29,10 +54,19 @@ export function getSecurityConfig() {
   return {
     pair: {
       codeLength: readIntEnv('PAIR_CODE_LENGTH', 6, 6, 12),
-      codeTtlSec: readIntEnv('PAIR_CODE_TTL_SEC', 3600, 60, 3600),
+      codeTtlSec: readIntEnvAny(['PAIR_TTL_SECONDS', 'PAIR_CODE_TTL_SEC'], 3600, 60, 3600),
       statusSessionIssueWindowSec: readIntEnv('PAIR_STATUS_SESSION_ISSUE_WINDOW_SEC', 180, 30, 1800),
+      maxFails: readIntEnv('PAIR_MAX_FAILS', 30, 1, 100000),
+      lockSec: readIntEnv('PAIR_LOCK_SECONDS', 180, 1, 86400),
       // 开发阶段默认拉长设备会话，避免已绑定设备频繁重新配对。
       deviceSessionTtlSec: readIntEnv('DEVICE_SESSION_TTL_SEC', 10 * 365 * 24 * 60 * 60, 600, 50 * 365 * 24 * 60 * 60)
+    },
+    proxy: {
+      trustForwardedHeaders: readBoolEnv('TRUST_PROXY', false),
+      trustedProxyCidrs: readCsvEnv('TRUST_PROXY_CIDRS')
+    },
+    cookie: {
+      secure: readBoolEnv('COOKIE_SECURE', false)
     },
     rateLimit: {
       pairCode: {

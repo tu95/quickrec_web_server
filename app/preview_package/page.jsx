@@ -8,6 +8,7 @@ export const dynamic = 'force-dynamic'
 
 function fallbackPayload(errorMessage = '') {
   return {
+    version: '',
     generatedAt: '',
     totalCount: 0,
     successCount: 0,
@@ -23,6 +24,7 @@ async function loadPreviewPackages() {
     const raw = await fs.readFile(dataFile, 'utf8')
     const data = JSON.parse(raw)
     return {
+      version: String(data?.version || data?.buildVersion || ''),
       generatedAt: String(data?.generatedAt || ''),
       totalCount: Number(data?.totalCount || 0),
       successCount: Number(data?.successCount || 0),
@@ -44,14 +46,11 @@ export default async function PreviewPackagePage() {
           <Link href="/" className={styles.backLink}>返回录音首页</Link>
           <span className={styles.heroBadge}>本地脚本生成 · 服务端静态托管</span>
         </div>
-        <h1 className={styles.title}>测试安装二维码</h1>
-        <p className={styles.subtitle}>
-          使用本地 `zeus preview` 批量生成安装链接和二维码。页面支持搜索、复制链接、查看失败日志。
-        </p>
+        <h1 className={styles.title}>二维码安装</h1>
+        <h2>选择你的设备型号</h2>
       </section>
 
       <PreviewPackageClient initialPayload={payload} />
     </main>
   )
 }
-

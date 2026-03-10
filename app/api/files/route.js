@@ -238,17 +238,26 @@ async function loadLatestMeetingJobMap(userId) {
 
 function resolveRecordingUrls(recording, config) {
   const key = String(recording?.oss_key || '').trim()
+  const bucket = String(recording?.oss_bucket || '').trim()
+  const fileName = String(recording?.file_name || '').trim()
   const rawUrl = String(recording?.oss_url || '').trim()
   if (key && config) {
     try {
-      const signed = signOssObjectUrl(config, key, {
-        signedUrlExpiresSec: config?.aliyun?.oss?.asrSignedUrlExpiresSec
+      const streamSigned = signOssObjectUrl(config, key, {
+        signedUrlExpiresSec: config?.aliyun?.oss?.asrSignedUrlExpiresSec,
+        ossBucket: bucket
+      })
+      const downloadSigned = signOssObjectUrl(config, key, {
+        signedUrlExpiresSec: config?.aliyun?.oss?.asrSignedUrlExpiresSec,
+        ossBucket: bucket,
+        forceAttachment: true,
+        downloadFileName: fileName || 'recording'
       })
       return {
-        downloadUrl: String(signed?.signedUrl || signed?.url || rawUrl),
-        streamUrl: String(signed?.signedUrl || signed?.url || rawUrl),
-        ossUrl: String(signed?.url || rawUrl),
-        signedUrl: String(signed?.signedUrl || '')
+        downloadUrl: String(downloadSigned?.signedUrl || streamSigned?.signedUrl || rawUrl),
+        streamUrl: String(streamSigned?.signedUrl || streamSigned?.url || rawUrl),
+        ossUrl: String(streamSigned?.signedUrl || rawUrl),
+        signedUrl: String(streamSigned?.signedUrl || '')
       }
     } catch {}
   }
@@ -312,6 +321,7 @@ export async function GET(request) {
         isOpusLocked: ext === '.opus',
         durationSec,
         ossKey: String(record?.oss_key || ''),
+        ossBucket: String(record?.oss_bucket || ''),
         ossUrl: urls.ossUrl,
         signedUrl: urls.signedUrl,
         downloadUrl: urls.downloadUrl,

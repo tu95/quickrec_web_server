@@ -716,10 +716,12 @@ function resolveAsrSourceFromRecording(config, recording) {
     throw new Error('录音文件名无效')
   }
   const ossKey = String(recording?.oss_key || recording?.ossKey || '').trim()
+  const ossBucket = String(recording?.oss_bucket || recording?.ossBucket || '').trim()
   const ossUrl = String(recording?.oss_url || recording?.ossUrl || '').trim()
   if (ossKey) {
     const signed = signOssObjectUrl(config, ossKey, {
-      signedUrlExpiresSec: config?.aliyun?.oss?.asrSignedUrlExpiresSec
+      signedUrlExpiresSec: config?.aliyun?.oss?.asrSignedUrlExpiresSec,
+      ossBucket
     })
     const asrUrl = String(signed?.signedUrl || signed?.url || '').trim()
     if (!asrUrl) {

@@ -157,8 +157,6 @@ export async function createPairCodeForDevice(deviceIdentity, identitySource, de
         device,
         alreadyPaired: true,
         status: 'already_paired',
-        sessionToken: String(activeSession.session_token || ''),
-        sessionExpiresAt: String(activeSession.expires_at || ''),
         pairCode: '',
         expiresAt: ''
       }
@@ -653,6 +651,7 @@ export async function insertRecordingMetadata(input) {
     file_name: String(payload.fileName || '').trim(),
     oss_key: String(payload.ossKey || '').trim(),
     oss_url: String(payload.ossUrl || '').trim(),
+    oss_bucket: String(payload.ossBucket || '').trim(),
     size_bytes: Number(payload.sizeBytes) || 0,
     duration_sec: Number(payload.durationSec) || 0,
     sha256: String(payload.sha256 || '').trim(),

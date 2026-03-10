@@ -5,11 +5,177 @@ import {
   getSupabaseAnonKey,
   getSupabaseUrl
 } from './supabase-client'
+import { getCookieSecureSuffix } from './cookie-security'
 
 export const USER_ACCESS_COOKIE = 'zr_user_access_token'
 export const USER_REFRESH_COOKIE = 'zr_user_refresh_token'
 
-const USER_COOKIE_TTL_SEC = 60 * 60 * 24 * 14
+function getUserCookieTtlSec() {
+  const raw = String(process.env.USER_SESSION_TTL_SEC || '').trim()
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed)) return 60 * 60 * 24
+  return Math.max(600, Math.min(Math.floor(parsed), 60 * 60 * 24 * 30))
+}
+
+function normalizeAuthErrorMessage(raw) {
+  const text = String(raw || '').trim()
+  if (!text) return '登录已失效，请重新登录'
+  const lowered = text.toLowerCase()
+  if (
+    lowered.includes('jwt') ||
+    lowered.includes('token is expired') ||
+    lowered.includes('expired') ||
+    lowered.includes('invalid token') ||
+    lowered.includes('signature')
+  ) {
+    return '登录已失效，请重新登录'
+  }
+  if (lowered.includes('session') || lowered.includes('auth')) {
+    return '登录已失效，请重新登录'
+  }
+  return text
+}
+
+function readIntEnv(name, fallback, min, max) {
+  const raw = String(process.env[name] || '').trim()
+  const parsed = raw ? Number(raw) : Number(fallback)
+  let value = Number.isFinite(parsed) ? Math.floor(parsed) : Number(fallback)
+  if (Number.isFinite(min)) value = Math.max(value, Number(min))
+  if (Number.isFinite(max)) value = Math.min(value, Number(max))
+  return value
+}
+
+function getAuthNetworkTimeoutMs() {
+  return readIntEnv('SUPABASE_AUTH_TIMEOUT_MS', 3200, 1000, 15000)
+}
+
+function getAuthRetryMax() {
+  return readIntEnv('SUPABASE_AUTH_RETRY_MAX', 2, 1, 5)
+}
+
+function getAuthRetryDelayMs() {
+  return readIntEnv('SUPABASE_AUTH_RETRY_DELAY_MS', 180, 50, 3000)
+}
+
+function sleep(ms) {
+  return new Promise(resolve => {
+    setTimeout(resolve, Math.max(0, Number(ms) || 0))
+  })
+}
+
+function normalizeErrorText(value) {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'object') {
+    return String(
+      value?.message ||
+      value?.error_description ||
+      value?.error ||
+      value?.name ||
+      ''
+    )
+  }
+  return String(value)
+}
+
+function isNetworkLikeErrorText(raw) {
+  const text = String(raw || '').toLowerCase()
+  if (!text) return false
+  return (
+    text.includes('fetch failed') ||
+    text.includes('econnreset') ||
+    text.includes('etimedout') ||
+    text.includes('enotfound') ||
+    text.includes('eai_again') ||
+    text.includes('connect timeout') ||
+    text.includes('socket disconnected') ||
+    text.includes('tls') ||
+    text.includes('network') ||
+    text.includes('und_err')
+  )
+}
+
+async function requestAuthUser(accessToken, timeoutMs) {
+  const url = getSupabaseUrl()
+  const anonKey = getSupabaseAnonKey()
+  const token = String(accessToken || '').trim()
+  if (!url || !anonKey || !token) {
+    return {
+      ok: false,
+      type: 'invalid',
+      error: '登录已失效，请重新登录'
+    }
+  }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => {
+    try {
+      controller.abort()
+    } catch {}
+  }, timeoutMs)
+
+  try {
+    const response = await fetch(`${url}/auth/v1/user`, {
+      method: 'GET',
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${token}`
+      },
+      cache: 'no-store',
+      signal: controller.signal
+    })
+    const payload = await response.json().catch(() => null)
+    if (response.ok) {
+      const user = payload && typeof payload === 'object'
+        ? (payload.user || payload)
+        : null
+      if (user && user.id) {
+        return { ok: true, user }
+      }
+      return { ok: false, type: 'invalid', error: '登录已失效，请重新登录' }
+    }
+    const errorText = normalizeErrorText(payload?.message || payload?.error_description || payload?.error)
+    if (response.status >= 500 || response.status === 429) {
+      return {
+        ok: false,
+        type: 'network',
+        error: errorText || `Supabase Auth HTTP ${response.status}`
+      }
+    }
+    return {
+      ok: false,
+      type: 'invalid',
+      error: errorText || `Supabase Auth HTTP ${response.status}`
+    }
+  } catch (error) {
+    const text = normalizeErrorText(error)
+    return {
+      ok: false,
+      type: isNetworkLikeErrorText(text) ? 'network' : 'invalid',
+      error: text || 'fetch failed'
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function getAuthUserWithRetry(accessToken) {
+  const timeoutMs = getAuthNetworkTimeoutMs()
+  const retryMax = getAuthRetryMax()
+  const retryDelayMs = getAuthRetryDelayMs()
+  let last = { ok: false, type: 'invalid', error: '登录已失效，请重新登录' }
+
+  for (let i = 0; i < retryMax; i += 1) {
+    const result = await requestAuthUser(accessToken, timeoutMs)
+    last = result
+    if (result.ok) return result
+    if (result.type !== 'network') return result
+    if (i < retryMax - 1) {
+      await sleep(retryDelayMs * (i + 1))
+    }
+  }
+  return last
+}
 
 function parseCookiesFromHeader(cookieHeader) {
   const text = String(cookieHeader || '')
@@ -30,7 +196,7 @@ function buildCookie(name, value, maxAge) {
   const safeName = encodeURIComponent(String(name || '').trim())
   const safeValue = encodeURIComponent(String(value || ''))
   const ttl = Number(maxAge) || 0
-  const base = `${safeName}=${safeValue}; Path=/; HttpOnly; SameSite=Lax`
+  const base = `${safeName}=${safeValue}; Path=/; HttpOnly; SameSite=Lax${getCookieSecureSuffix()}`
   if (ttl <= 0) {
     return `${base}; Max-Age=0`
   }
@@ -58,9 +224,10 @@ export function getAccessTokenFromRequest(request) {
 export function buildUserSessionCookies(session) {
   const accessToken = String(session?.access_token || '')
   const refreshToken = String(session?.refresh_token || '')
+  const ttl = getUserCookieTtlSec()
   return [
-    buildCookie(USER_ACCESS_COOKIE, accessToken, USER_COOKIE_TTL_SEC),
-    buildCookie(USER_REFRESH_COOKIE, refreshToken, USER_COOKIE_TTL_SEC)
+    buildCookie(USER_ACCESS_COOKIE, accessToken, ttl),
+    buildCookie(USER_REFRESH_COOKIE, refreshToken, ttl)
   ]
 }
 
@@ -146,31 +313,25 @@ export async function requireUserAuth(request) {
       error: '未登录'
     }
   }
-  const anonClient = createSupabaseAnonClient()
-  let data = null
-  let error = null
-  try {
-    const result = await anonClient.auth.getUser(accessToken)
-    data = result?.data || null
-    error = result?.error || null
-  } catch (err) {
+  const authResult = await getAuthUserWithRetry(accessToken)
+  if (!authResult.ok && authResult.type === 'network') {
     return {
       ok: false,
       status: 503,
-      error: `认证服务连接失败，请稍后重试（${String(err?.message || err)}）`
+      error: '认证服务连接失败，请稍后重试'
     }
   }
-  if (error || !data?.user) {
+  if (!authResult.ok || !authResult.user) {
     return {
       ok: false,
       status: 401,
-      error: String(error?.message || '登录已失效')
+      error: normalizeAuthErrorMessage(authResult.error || '登录已失效，请重新登录')
     }
   }
   return {
     ok: true,
     accessToken,
-    user: data.user
+    user: authResult.user
   }
 }
 

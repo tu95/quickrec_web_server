@@ -5,14 +5,14 @@ import {
   queryDashscopeAsrTask,
   submitDashscopeAsrTask
 } from '../../../../_lib/aliyun-test'
-import { mergeConfigWithSecretPreserve } from '../../../../_lib/config-store'
+import { getSystemConfigProfileById, mergeConfigWithSecretPreserve } from '../../../../_lib/config-store'
 import { logRuntimeError } from '../../../../_lib/runtime-log'
 
-function pickAliyunConfig(body, authConfig) {
+function pickAliyunConfig(body, baseConfig) {
   if (body?.aliyun && typeof body.aliyun === 'object') {
-    return mergeConfigWithSecretPreserve(authConfig, { aliyun: body.aliyun }).aliyun || {}
+    return mergeConfigWithSecretPreserve(baseConfig, { aliyun: body.aliyun }).aliyun || {}
   }
-  return authConfig?.aliyun || {}
+  return baseConfig?.aliyun || {}
 }
 
 export async function POST(request) {
@@ -22,7 +22,11 @@ export async function POST(request) {
   }
 
   const body = await request.json().catch(() => null)
-  const aliyun = pickAliyunConfig(body, auth.config)
+  const profileId = String(body?.profileId || '').trim()
+  const baseConfig = profileId
+    ? (await getSystemConfigProfileById(profileId, auth.user?.id)).config
+    : auth.config
+  const aliyun = pickAliyunConfig(body, baseConfig)
   const asr = aliyun?.asr || {}
 
   try {
@@ -86,6 +90,7 @@ export async function POST(request) {
     await logRuntimeError('aliyun.asr.test.failed', {
       error: String(error?.message || error),
       stack: error?.stack ? String(error.stack) : '',
+      profileId,
       baseUrl: String(asr?.baseUrl || ''),
       model: String(asr?.model || '')
     })

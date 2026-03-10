@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useState } from 'react'
 
 export default function HomeAuthActions() {
   const [busy, setBusy] = useState(false)
@@ -34,24 +35,36 @@ export default function HomeAuthActions() {
 
   return (
     <nav className="top-nav-shell" aria-label="快速导航">
-      <a href="/" className={linkClass('/')}>
-        首页
-      </a>
-      <a href="/pair" className={linkClass('/pair')}>
-        绑定设备
-      </a>
-      <a href="/preview_package" className={linkClass('/preview_package')}>
-        获取安装包
-      </a>
-      <a href="/tutorial" className={linkClass('/tutorial')}>
-        教程
-      </a>
-      <a href="/account" className={linkClass('/account')}>
-        账户
-      </a>
-      <button type="button" onClick={logout} disabled={busy} className="top-nav-link top-nav-link-danger">
-        {busy ? '退出中...' : '退出登录'}
-      </button>
+      <div className="top-nav-main">
+        <Link href="/" className={linkClass('/')} aria-current={pathname === '/' ? 'page' : undefined}>
+          录音文件
+        </Link>
+        <Link
+          href="/service-config"
+          className={linkClass('/service-config')}
+          aria-current={pathname === '/service-config' ? 'page' : undefined}
+        >
+          AI服务配置
+        </Link>
+        <Link href="/pair" className={linkClass('/pair')} aria-current={pathname === '/pair' ? 'page' : undefined}>
+          绑定设备
+        </Link>
+        <Link href="/tutorial" className={linkClass('/tutorial')} aria-current={pathname === '/tutorial' ? 'page' : undefined}>
+          使用教程
+        </Link>
+      </div>
+
+      <div className="top-nav-tools">
+        <Link href="/preview_package" className={linkClass('/preview_package', 'top-nav-link-tool')}>
+          获取安装包
+        </Link>
+        <Link href="/account" className={linkClass('/account', 'top-nav-link-tool')}>
+          账户
+        </Link>
+        <button type="button" onClick={logout} disabled={busy} className="top-nav-link top-nav-link-danger">
+          {busy ? '退出中...' : '退出登录'}
+        </button>
+      </div>
     </nav>
   )
 }

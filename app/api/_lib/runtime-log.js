@@ -35,6 +35,11 @@ export async function writeRuntimeLog(level, event, detail = {}) {
     event: String(event || 'unknown'),
     detail: sanitize(detail)
   }
+  if (payload.level === 'ERROR') {
+    try {
+      console.error(`[runtime:${payload.event}] ${JSON.stringify(payload.detail)}`)
+    } catch {}
+  }
   try {
     await fs.mkdir(LOG_DIR, { recursive: true })
     await fs.appendFile(RUNTIME_LOG_PATH, `${JSON.stringify(payload)}\n`, 'utf8')
@@ -44,4 +49,3 @@ export async function writeRuntimeLog(level, event, detail = {}) {
 export async function logRuntimeError(event, detail = {}) {
   await writeRuntimeLog('ERROR', event, detail)
 }
-
