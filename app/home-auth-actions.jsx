@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
+import { clearCurrentUserApiCaches } from './_lib/client-cache'
 
 export default function HomeAuthActions() {
   const [busy, setBusy] = useState(false)
@@ -21,10 +22,12 @@ export default function HomeAuthActions() {
       if (!res.ok || !data?.success) {
         throw new Error(data?.error || `HTTP ${res.status}`)
       }
+      clearCurrentUserApiCaches()
       if (typeof window !== 'undefined') {
         window.location.href = '/login'
       }
     } catch (error) {
+      clearCurrentUserApiCaches()
       if (typeof window !== 'undefined' && typeof window.alert === 'function') {
         window.alert(String(error?.message || error))
       }

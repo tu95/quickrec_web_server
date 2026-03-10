@@ -10,7 +10,8 @@ export async function POST(request, { params }) {
     )
   }
 
-  const id = String(params?.id || '')
+  const routeParams = await params
+  const id = String(routeParams?.id || '')
   if (!id) {
     return Response.json(
       { success: false, error: 'invalid job id' },

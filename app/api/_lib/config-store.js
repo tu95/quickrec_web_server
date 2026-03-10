@@ -772,15 +772,22 @@ export async function createUserConfigProfile(userId, name = '') {
     throw new Error(`${configError}（无法创建个人配置）`)
   }
   const client = createSupabaseServiceClient()
-  const listing = await listUserConfigProfiles(uid)
+  const { count, error: countError } = await client
+    .from(USER_PROFILE_TABLE)
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', uid)
+  if (countError) {
+    wrapProfileTableError(countError, USER_PROFILE_TABLE, MISSING_USER_PROFILE_TABLE_ERROR, '创建个人配置失败')
+  }
+  const profileCount = Number.isFinite(Number(count)) ? Number(count) : 0
   const now = nowIso()
   const { data, error } = await client
     .from(USER_PROFILE_TABLE)
     .insert({
       user_id: uid,
-      name: normalizeProfileName(name, `我的配置 ${listing.profiles.length + 1}`),
+      name: normalizeProfileName(name, `我的配置 ${profileCount + 1}`),
       config_json: extractUserScopedConfig(DEFAULT_CONFIG),
-      is_active: listing.profiles.length === 0,
+      is_active: profileCount === 0,
       created_at: now,
       updated_at: now
     })

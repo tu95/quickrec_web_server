@@ -60,7 +60,8 @@ export async function GET(request, { params }) {
   }
 
   const userId = String(auth.user?.id || '').trim()
-  const recordingId = normalizeRecordingId(params?.name)
+  const routeParams = await params
+  const recordingId = normalizeRecordingId(routeParams?.name)
   if (!recordingId) {
     return Response.json(
       { success: false, error: 'invalid recording id' },
@@ -129,7 +130,8 @@ export async function DELETE(request, { params }) {
   }
 
   const userId = String(auth.user?.id || '').trim()
-  const recordingId = normalizeRecordingId(params?.name)
+  const routeParams = await params
+  const recordingId = normalizeRecordingId(routeParams?.name)
   if (!recordingId) {
     return Response.json(
       { success: false, error: 'invalid recording id' },

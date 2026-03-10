@@ -6,6 +6,7 @@ const USER_QUOTA_LIMITS_TABLE = 'recorder_user_quota_limits'
 const DEFAULT_NON_ADMIN_MEETING_NOTES_LIMIT = 5
 const DEFAULT_NON_ADMIN_MEETING_NOTES_LIMIT_MESSAGE = '测试版每人赠送5次会议纪要生成功能'
 const MISSING_USAGE_SCHEMA_ERROR = '缺少 recorder_usage_counters 表或 consume_recorder_quota 函数，请先在 Supabase 执行 web_server/supabase/schema.sql'
+const BROKEN_USAGE_RPC_ERROR = 'consume_recorder_quota 函数存在 used_count 歧义，请在 Supabase 重新执行 web_server/supabase/schema.sql'
 
 function normalizeUserId(raw) {
   return String(raw || '').trim()
@@ -57,6 +58,17 @@ function isMissingQuotaOverridesSchemaError(error) {
   return (
     (text.includes(USER_QUOTA_LIMITS_TABLE) && text.includes('could not find')) ||
     (text.includes(USER_QUOTA_LIMITS_TABLE) && text.includes('does not exist'))
+  )
+}
+
+function isAmbiguousUsageColumnError(error) {
+  const code = String(error?.code || '').toUpperCase()
+  if (code === '42702') return true
+  const text = String(error?.message || error || '').toLowerCase()
+  return (
+    text.includes('column reference') &&
+    text.includes('used_count') &&
+    text.includes('ambiguous')
   )
 }
 
@@ -138,6 +150,7 @@ export async function consumeMeetingNotesQuota(userId, options = null) {
   })
   if (error) {
     if (isMissingUsageSchemaError(error)) throw new Error(MISSING_USAGE_SCHEMA_ERROR)
+    if (isAmbiguousUsageColumnError(error)) throw new Error(BROKEN_USAGE_RPC_ERROR)
     throw new Error(String(error.message || '配额校验失败'))
   }
 

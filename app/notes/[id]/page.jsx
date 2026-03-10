@@ -30,10 +30,11 @@ function buildOrigin(headerStore) {
 }
 
 export default async function NoteViewerPage({ params }) {
-  const noteId = String(params?.id || '').trim()
+  const routeParams = await params
+  const noteId = String(routeParams?.id || '').trim()
   if (!noteId) notFound()
 
-  const headerStore = headers()
+  const headerStore = await headers()
   const cookie = String(headerStore.get('cookie') || '')
   if (!cookie) {
     redirect(`/login?next=${encodeURIComponent(`/notes/${noteId}`)}`)

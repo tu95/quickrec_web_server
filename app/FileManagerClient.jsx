@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCachedApi } from './_lib/use-cached-api'
 
 function formatDate(timestamp) {
   return new Date(timestamp).toLocaleString('zh-CN')
@@ -69,25 +70,40 @@ function normalizeNoteViewUrl(rawUrl) {
   return value
 }
 
-export default function FileManagerClient({ origin, initialFiles }) {
+function normalizeQuotaSnapshot(rawQuota) {
+  if (!rawQuota || typeof rawQuota !== 'object') return null
+  const limit = Number(rawQuota.limit)
+  const usedCount = Number(rawQuota.usedCount)
+  const remaining = Number(rawQuota.remaining)
+  if (!Number.isFinite(limit) || !Number.isFinite(usedCount) || !Number.isFinite(remaining)) return null
+  return {
+    limit: Math.max(0, Math.floor(limit)),
+    usedCount: Math.max(0, Math.floor(usedCount)),
+    remaining: Math.max(0, Math.floor(remaining))
+  }
+}
+
+function isSameQuotaSnapshot(a, b) {
+  if (!a || !b) return false
+  return (
+    a.limit === b.limit &&
+    a.usedCount === b.usedCount &&
+    a.remaining === b.remaining
+  )
+}
+
+export default function FileManagerClient({ origin, initialFiles, cacheUserId }) {
   const [files, setFiles] = useState(Array.isArray(initialFiles) ? initialFiles : [])
   const [activeTab, setActiveTab] = useState('recording')
   const [pageSize, setPageSize] = useState(10)
   const [currentPage, setCurrentPage] = useState(1)
-  const [loading, setLoading] = useState(false)
   const [busyMap, setBusyMap] = useState({})
   const [noteBusyMap, setNoteBusyMap] = useState({})
   const [noteCancelBusyMap, setNoteCancelBusyMap] = useState({})
   const [noteJobMap, setNoteJobMap] = useState({})
   const [noteErrorLog, setNoteErrorLog] = useState('')
-  const [quotaState, setQuotaState] = useState({
-    loading: true,
-    error: '',
-    limit: 0,
-    usedCount: 0,
-    remaining: 0
-  })
   const [message, setMessage] = useState('')
+  const [quotaSnapshot, setQuotaSnapshot] = useState(null)
   const [player, setPlayer] = useState({
     fileId: '',
     url: '',
@@ -106,35 +122,56 @@ export default function FileManagerClient({ origin, initialFiles }) {
   const lastPollingErrorRef = useRef('')
   const downloadFrameRef = useRef(null)
   const meetingPollIntervalMs = 2500
-
-  async function refreshMeetingNotesQuota() {
-    try {
-      setQuotaState(prev => ({ ...prev, loading: true, error: '' }))
-      const res = await fetch('/api/user/quota/meeting-notes', { cache: 'no-store' })
-      const data = await res.json().catch(() => null)
-      if (!res.ok || !data?.success) {
-        const errorText = String(data?.error || `HTTP ${res.status}`)
-        setQuotaState(prev => ({ ...prev, loading: false, error: errorText }))
-        return
-      }
-      const limit = Number(data?.limit || 0)
-      const usedCount = Number(data?.usedCount || 0)
-      const remaining = Number(data?.remaining || 0)
-      setQuotaState({
-        loading: false,
-        error: '',
-        limit: Number.isFinite(limit) ? limit : 0,
-        usedCount: Number.isFinite(usedCount) ? usedCount : 0,
-        remaining: Number.isFinite(remaining) ? remaining : 0
-      })
-    } catch (error) {
-      setQuotaState(prev => ({
-        ...prev,
-        loading: false,
-        error: String(error?.message || error)
-      }))
+  const initialFilesPayload = useMemo(() => {
+    if (!Array.isArray(initialFiles) || initialFiles.length === 0) return null
+    return { success: true, files: initialFiles }
+  }, [initialFiles])
+  const filesApi = useCachedApi({
+    apiPath: '/api/files',
+    userId: cacheUserId,
+    ttlMs: 45 * 1000,
+    enabled: true,
+    initialData: initialFilesPayload,
+    successGuard: (payload) => !!(payload?.success && Array.isArray(payload?.files))
+  })
+  const quotaApi = useCachedApi({
+    apiPath: '/api/user/quota/meeting-notes',
+    userId: cacheUserId,
+    ttlMs: 20 * 1000,
+    enabled: true,
+    initialData: null,
+    successGuard: (payload) => !!payload?.success
+  })
+  const loading = Boolean(filesApi.isLoading || filesApi.isValidating)
+  const quotaState = useMemo(() => {
+    const snapshot = normalizeQuotaSnapshot(quotaSnapshot)
+    if (snapshot) {
+      return { loading: false, error: '', ...snapshot }
     }
-  }
+    if (quotaApi.isLoading && !quotaApi.data) {
+      return { loading: true, error: '', limit: 0, usedCount: 0, remaining: 0 }
+    }
+    if (quotaApi.error && !quotaApi.data) {
+      return {
+        loading: false,
+        error: String(quotaApi.error?.message || quotaApi.error || '加载失败'),
+        limit: 0,
+        usedCount: 0,
+        remaining: 0
+      }
+    }
+    const data = quotaApi.data
+    const limit = Number(data?.limit || 0)
+    const usedCount = Number(data?.usedCount || 0)
+    const remaining = Number(data?.remaining || 0)
+    return {
+      loading: Boolean(quotaApi.isLoading),
+      error: quotaApi.error ? String(quotaApi.error?.message || quotaApi.error || '') : '',
+      limit: Number.isFinite(limit) ? limit : 0,
+      usedCount: Number.isFinite(usedCount) ? usedCount : 0,
+      remaining: Number.isFinite(remaining) ? remaining : 0
+    }
+  }, [quotaApi.data, quotaApi.error, quotaApi.isLoading, quotaSnapshot])
 
   function navigateTo(url) {
     const target = String(url || '').trim()
@@ -199,17 +236,24 @@ export default function FileManagerClient({ origin, initialFiles }) {
   }, [files])
 
   async function refreshFiles() {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/files', { cache: 'no-store' })
-      const data = await res.json()
-      if (data && data.success && Array.isArray(data.files)) {
-        setFiles(data.files)
-      }
-    } finally {
-      setLoading(false)
-    }
+    await filesApi.refresh()
   }
+
+  useEffect(() => {
+    const data = filesApi.data
+    if (!data || data.success !== true || !Array.isArray(data.files)) return
+    setFiles(data.files)
+  }, [filesApi.data])
+
+  useEffect(() => {
+    setQuotaSnapshot(null)
+  }, [cacheUserId])
+
+  useEffect(() => {
+    const snapshot = normalizeQuotaSnapshot(quotaApi.data)
+    if (!snapshot) return
+    setQuotaSnapshot(prev => (isSameQuotaSnapshot(prev, snapshot) ? prev : snapshot))
+  }, [quotaApi.data])
 
   function setBusy(name, value) {
     setBusyMap(prev => ({ ...prev, [name]: value }))
@@ -431,6 +475,10 @@ export default function FileManagerClient({ origin, initialFiles }) {
       if (!createRes.ok || !createData || !createData.success || !createData.job) {
         throw new Error((createData && createData.error) ? createData.error : `HTTP ${createRes.status}`)
       }
+      const snapshot = normalizeQuotaSnapshot(createData?.quota)
+      if (snapshot) {
+        setQuotaSnapshot(prev => (isSameQuotaSnapshot(prev, snapshot) ? prev : snapshot))
+      }
       trackMeetingJob(fileId, createData.job, { autoOpenOnComplete: true })
       if (isMeetingJobRunning(createData.job)) {
         setMessage('纪要任务已创建，正在后台生成')
@@ -443,7 +491,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
       setNoteErrorLog(text)
     } finally {
       setNoteBusy(fileId, false)
-      void refreshMeetingNotesQuota()
+      void quotaApi.refresh()
     }
   }
 
@@ -623,10 +671,6 @@ export default function FileManagerClient({ origin, initialFiles }) {
   }, [files])
 
   useEffect(() => {
-    void refreshMeetingNotesQuota()
-  }, [])
-
-  useEffect(() => {
     function onVisibilityChange() {
       if (typeof document !== 'undefined' && document.hidden) {
         stopMeetingPolling()
@@ -767,8 +811,8 @@ export default function FileManagerClient({ origin, initialFiles }) {
     }
 
     return (
-      <div style={actionBlockStyle}>
-        <div style={actionPrimaryRowStyle}>
+      <div style={actionBlockStyle} className="file-action-block">
+        <div style={actionPrimaryRowStyle} className="file-action-primary-row">
         {isOpus ? (
           <>
             <button type="button" onClick={() => triggerDownload(file)} style={linkStyle} className="file-action-link">下载OPUS</button>
@@ -791,7 +835,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
             onClick={() => generateMeetingNote(file)}
             disabled={noteBusy || noteCancelBusy}
           >
-            {noteBusy ? '纪要生成中...' : '一键生成会议纪要'}
+            {noteBusy ? '纪要生成中...' : '生成音频纪要'}
           </button>
         )}
         {canGenerateNote && isMeetingJobRunning(noteJob) && (
@@ -810,7 +854,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
             className="file-action-btn"
             onClick={() => openMeetingNoteByUrl(noteViewUrl)}
           >
-            查看会议纪要
+            查看纪要
           </button>
         )}
         <button
@@ -823,7 +867,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
         </button>
         </div>
         {secondaryMessages.length > 0 && (
-          <div style={statusRowStyle}>
+          <div style={statusRowStyle} className="file-status-row">
             {secondaryMessages.map((text, index) => (
               <span key={`${fileId}__status_${index}`} style={statusBadgeStyle}>
                 {text}
@@ -846,6 +890,7 @@ export default function FileManagerClient({ origin, initialFiles }) {
     : quotaState.error
       ? '加载失败'
       : String(Math.max(0, quotaState.remaining))
+  const syncNotice = filesApi.cacheMessage || quotaApi.cacheMessage || ''
 
   useEffect(() => {
     setCurrentPage(1)
@@ -880,6 +925,9 @@ export default function FileManagerClient({ origin, initialFiles }) {
           {loading ? '刷新中...' : '刷新列表'}
         </button>
       </div>
+      {syncNotice && (
+        <div style={syncHintStyle}>{syncNotice}</div>
+      )}
 
       <div className="file-tab-row" style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <button
@@ -962,8 +1010,8 @@ export default function FileManagerClient({ origin, initialFiles }) {
         </div>
       ) : (
         <div className="responsive-table-wrap" style={tableWrapStyle}>
-          <table style={tableStyle}>
-            <thead>
+          <table style={tableStyle} className="file-table">
+            <thead className="file-table-head">
               <tr style={{ background: '#fafafa' }}>
                 <th style={headerStyle}>播放</th>
                 <th style={headerStyle}>标题</th>
@@ -995,10 +1043,60 @@ export default function FileManagerClient({ origin, initialFiles }) {
                 const playIconSrc = isPlayingCurrent ? '/icons/zanting.svg' : '/icons/bofang.svg'
                 const playLabel = isPlayingCurrent ? '暂停' : '播放'
 
-                return [
-                  <tr key={`${fileId}__main`} style={{ borderBottom: isCurrentFile ? 'none' : '1px solid #eee' }}>
-                    <td style={playCellStyle}>
-                      {canPlay ? (
+                const progressRow = isCurrentFile ? (
+                  <tr key={`${fileId}__progress`} className="file-row-progress" style={{ borderBottom: '1px solid #eee' }}>
+                    <td colSpan={6} style={progressRowCellStyle} className="file-progress-cell">
+                      <div style={progressPanelStyle} className="file-progress-panel">
+                        <div style={progressPanelInnerStyle}>
+                          {canPlay ? (
+                            <button
+                              style={playBtnStyle}
+                              className="file-action-btn"
+                              onClick={() => togglePlay(file)}
+                              aria-label={playLabel}
+                              title={playLabel}
+                            >
+                              <img src={playIconSrc} alt={playLabel} style={playIconStyle} />
+                            </button>
+                          ) : (
+                            <span style={nonPlayableHintStyle}>-</span>
+                          )}
+                          <div style={progressPanelContentStyle}>
+                            <div style={progressMetaRowStyle} className="file-progress-meta">
+                              <span style={progressTimeTextStyle} className="file-progress-time">
+                                {formatDuration(panelCurrent)} / {formatDuration(panelDuration)}
+                              </span>
+                              <span style={progressStatusTextStyle} className="file-progress-status">
+                                {player.error ? player.error : (player.playing ? '播放中' : '已暂停')}
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min={0}
+                              max={maxSeek}
+                              step={1}
+                              value={Math.max(0, Math.min(panelCurrent, maxSeek))}
+                              onChange={(event) => {
+                                seekCurrentPlayback(fileId, event.target.value)
+                              }}
+                              style={progressRangeStyle}
+                              className="file-progress-range"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null
+
+                const mainRow = (
+                  <tr
+                    key={`${fileId}__main`}
+                    className={`file-row-main${isCurrentFile ? ' file-row-main-current' : ''}`}
+                    style={{ borderBottom: '1px solid #eee' }}
+                  >
+                    <td style={playCellStyle} className="file-cell file-cell-play" data-label="播放">
+                      {!isCurrentFile && canPlay ? (
                         <button
                           style={playBtnStyle}
                           className="file-action-btn"
@@ -1012,49 +1110,24 @@ export default function FileManagerClient({ origin, initialFiles }) {
                         <span style={nonPlayableHintStyle}>-</span>
                       )}
                     </td>
-                    <td style={fileNameCellStyle}>
+                    <td style={fileNameCellStyle} className="file-cell file-cell-title" data-label="标题">
                       <div style={fileTitleStyle}>{getDisplayTitle(file)}</div>
                       {String(file.latestNoteTitle || '').trim() && (
                         <div style={fileNameSubtleStyle}>{file.name}</div>
                       )}
                     </td>
-                    <td style={durationCellStyle}>{formatDuration(rowDuration)}</td>
-                    <td style={cellStyle}>{file.sizeFormatted}</td>
-                    <td style={cellStyle}>{formatDate(file.createdAt)}</td>
-                    <td style={cellStyle}>
+                    <td style={durationCellStyle} className="file-cell file-cell-duration" data-label="时长">{formatDuration(rowDuration)}</td>
+                    <td style={cellStyle} className="file-cell file-cell-size" data-label="大小">{file.sizeFormatted}</td>
+                    <td style={cellStyle} className="file-cell file-cell-created" data-label="上传时间">{formatDate(file.createdAt)}</td>
+                    <td style={cellStyle} className="file-cell file-cell-actions" data-label="操作">
                       <div style={desktopActionsWrapStyle} className="file-actions">
                         {renderActions(file, busy, noteBusy, noteCancelBusy, noteJob)}
                       </div>
                     </td>
-                  </tr>,
-                  isCurrentFile ? (
-                    <tr key={`${fileId}__progress`} style={{ borderBottom: '1px solid #eee' }}>
-                      <td colSpan={6} style={progressRowCellStyle}>
-                        <div style={progressPanelStyle}>
-                          <div style={progressMetaRowStyle}>
-                            <span style={progressTimeTextStyle}>
-                              {formatDuration(panelCurrent)} / {formatDuration(panelDuration)}
-                            </span>
-                            <span style={progressStatusTextStyle}>
-                              {player.error ? player.error : (player.playing ? '播放中' : '已暂停')}
-                            </span>
-                          </div>
-                          <input
-                            type="range"
-                            min={0}
-                            max={maxSeek}
-                            step={1}
-                            value={Math.max(0, Math.min(panelCurrent, maxSeek))}
-                            onChange={(event) => {
-                              seekCurrentPlayback(fileId, event.target.value)
-                            }}
-                            style={progressRangeStyle}
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                  ) : null
-                ]
+                  </tr>
+                )
+
+                return progressRow ? [progressRow, mainRow] : [mainRow]
               })}
             </tbody>
           </table>
@@ -1134,7 +1207,9 @@ const fileNameCellStyle = {
 const playCellStyle = {
   ...cellStyle,
   width: 92,
-  minWidth: 92
+  minWidth: 92,
+  paddingTop: 10,
+  paddingBottom: 10
 }
 
 const durationCellStyle = {
@@ -1406,24 +1481,12 @@ const emptyStyle = {
   border: '1px solid rgba(35, 71, 77, 0.12)'
 }
 
-const progressRowCellStyle = {
-  padding: '0 14px 12px 14px',
-  background: 'rgba(250, 252, 253, 0.9)'
-}
-
-const progressPanelStyle = {
-  border: '1px solid rgba(34, 92, 102, 0.16)',
-  borderRadius: 10,
-  padding: '10px 12px',
-  background: 'linear-gradient(180deg, #ffffff 0%, #f4fafb 100%)'
-}
-
 const progressMetaRowStyle = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: 8,
-  marginBottom: 8
+  marginBottom: 0
 }
 
 const progressStatusTextStyle = {
@@ -1440,7 +1503,33 @@ const progressTimeTextStyle = {
 
 const progressRangeStyle = {
   width: '100%',
-  marginTop: 8
+  marginTop: 0
+}
+
+const progressRowCellStyle = {
+  padding: '8px 14px 8px 14px',
+  background: 'rgba(250, 252, 253, 0.94)'
+}
+
+const progressPanelStyle = {
+  border: '1px solid rgba(34, 92, 102, 0.16)',
+  borderRadius: 12,
+  padding: '10px 12px',
+  background: 'linear-gradient(180deg, #ffffff 0%, #f4fafb 100%)'
+}
+
+const progressPanelInnerStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
+  minWidth: 0
+}
+
+const progressPanelContentStyle = {
+  flex: 1,
+  minWidth: 0,
+  display: 'grid',
+  gap: 6
 }
 
 const messageStyle = {
@@ -1451,6 +1540,17 @@ const messageStyle = {
   marginBottom: 12,
   color: '#866020',
   fontSize: 13
+}
+
+const syncHintStyle = {
+  marginBottom: 10,
+  borderRadius: 10,
+  border: '1px solid rgba(219, 183, 110, 0.45)',
+  background: 'linear-gradient(180deg, rgba(255, 248, 225, 0.9) 0%, rgba(255, 242, 201, 0.9) 100%)',
+  color: '#7f5f20',
+  padding: '8px 10px',
+  fontSize: 12,
+  fontWeight: 600
 }
 
 const errorLogCardStyle = {

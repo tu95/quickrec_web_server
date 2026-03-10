@@ -19,7 +19,8 @@ export async function PUT(request, { params }) {
   if (!auth.ok) {
     return Response.json({ success: false, error: auth.error }, { status: auth.status })
   }
-  const profileId = String(params?.id || '').trim()
+  const routeParams = await params
+  const profileId = String(routeParams?.id || '').trim()
   const body = await request.json().catch(() => null)
   const payload = body && typeof body === 'object' ? (body.config || body) : null
   const name = String(body?.name || payload?.name || '').trim()
@@ -50,7 +51,8 @@ export async function DELETE(request, { params }) {
     return Response.json({ success: false, error: auth.error }, { status: auth.status })
   }
   try {
-    await deleteSystemConfigProfile(String(params?.id || '').trim(), auth.user?.id)
+    const routeParams = await params
+    await deleteSystemConfigProfile(String(routeParams?.id || '').trim(), auth.user?.id)
     return Response.json({ success: true })
   } catch (error) {
     return Response.json(

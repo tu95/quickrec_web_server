@@ -1,9 +1,7 @@
 import { headers } from 'next/headers'
-import { redirect } from 'next/navigation'
 import FileManagerClientNoSSR from './FileManagerClientNoSSR'
 
-function getRequestOrigin() {
-  const headerStore = headers()
+function getRequestOrigin(headerStore) {
   const forwardedProto = headerStore.get('x-forwarded-proto')
   const forwardedHost = headerStore.get('x-forwarded-host')
   if (forwardedHost) {
@@ -14,29 +12,46 @@ function getRequestOrigin() {
   return `${forwardedProto || 'http'}://${host}`
 }
 
-async function getFiles(origin) {
-  const headerStore = headers()
-  const cookie = headerStore.get('cookie') || ''
+function decodeJwtPayload(token) {
+  const text = String(token || '').trim()
+  const parts = text.split('.')
+  if (parts.length < 2) return null
+  const payload = String(parts[1] || '').replace(/-/g, '+').replace(/_/g, '/')
+  const padded = payload + '='.repeat((4 - payload.length % 4) % 4)
   try {
-    const res = await fetch(`${origin}/api/files`, {
-      cache: 'no-store',
-      headers: {
-        cookie
-      }
-    })
-    if (res.status === 401) {
-      redirect('/login?next=%2F')
-    }
-    const data = await res.json()
-    return data.success ? data.files : []
+    return JSON.parse(Buffer.from(padded, 'base64').toString('utf8'))
   } catch {
-    return []
+    return null
   }
 }
 
+function readCookieValue(cookieHeader, name) {
+  const safeName = String(name || '').trim()
+  if (!safeName) return ''
+  const source = String(cookieHeader || '')
+  if (!source) return ''
+  const escaped = safeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = source.match(new RegExp(`(?:^|;\\s*)${escaped}=([^;]*)`))
+  if (!match) return ''
+  try {
+    return decodeURIComponent(String(match[1] || ''))
+  } catch {
+    return String(match[1] || '')
+  }
+}
+
+function getUserIdFromAccessTokenCookie(headerStore) {
+  const cookieHeader = headerStore.get('cookie') || ''
+  const accessToken = readCookieValue(cookieHeader, 'zr_user_access_token')
+  if (!accessToken) return ''
+  const payload = decodeJwtPayload(accessToken)
+  return String(payload?.sub || payload?.user_id || '').trim()
+}
+
 export default async function Home() {
-  const origin = getRequestOrigin()
-  const files = await getFiles(origin)
+  const headerStore = await headers()
+  const origin = getRequestOrigin(headerStore)
+  const cacheUserId = getUserIdFromAccessTokenCookie(headerStore)
 
   return (
     <main className="page-root">
@@ -47,7 +62,7 @@ export default async function Home() {
         </p>
       </section>
       <section className="panel">
-        <FileManagerClientNoSSR origin={origin} initialFiles={files} />
+        <FileManagerClientNoSSR origin={origin} initialFiles={[]} cacheUserId={cacheUserId} />
       </section>
     </main>
   )

@@ -1,11 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useCachedApi } from '../_lib/use-cached-api'
 
 export default function AccountPage() {
   const [loading, setLoading] = useState(true)
   const [profileBusy, setProfileBusy] = useState(false)
   const [passwordBusy, setPasswordBusy] = useState(false)
+  const [cacheUserId, setCacheUserId] = useState('')
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [quota, setQuota] = useState({
@@ -20,55 +22,75 @@ export default function AccountPage() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const meApi = useCachedApi({
+    apiPath: '/api/user-auth/me',
+    userId: cacheUserId || 'session-auth',
+    ttlMs: 30 * 1000,
+    enabled: true,
+    allowUserIdFallback: false,
+    initialData: null,
+    successGuard: payload => !!(payload?.success && typeof payload?.authenticated === 'boolean')
+  })
+  const quotaApi = useCachedApi({
+    apiPath: '/api/user/quota/meeting-notes',
+    userId: cacheUserId,
+    ttlMs: 20 * 1000,
+    enabled: Boolean(cacheUserId),
+    initialData: null,
+    successGuard: (payload) => !!payload?.success
+  })
 
   useEffect(() => {
-    void bootstrap()
-  }, [])
-
-  async function bootstrap() {
-    setLoading(true)
-    setError('')
-    try {
-      const res = await fetch('/api/user-auth/me', { cache: 'no-store' })
-      const data = await res.json().catch(() => null)
-      if (!res.ok || !data?.success || !data?.authenticated) {
-        const next = encodeURIComponent('/account')
-        window.location.href = `/login?next=${next}`
-        return
-      }
-      setEmail(String(data?.user?.email || '').trim())
-      setDisplayName(String(data?.user?.displayName || '').trim())
-      await refreshQuota()
-    } catch (err) {
-      setError(String(err?.message || err))
-    } finally {
-      setLoading(false)
+    const data = meApi.data
+    if (!data || data.success !== true) return
+    if (!data.authenticated) {
+      const next = encodeURIComponent('/account')
+      window.location.href = `/login?next=${next}`
+      return
     }
-  }
+    setEmail(String(data?.user?.email || '').trim())
+    setDisplayName(String(data?.user?.displayName || '').trim())
+    setCacheUserId(String(data?.user?.id || '').trim())
+    setLoading(false)
+  }, [meApi.data])
 
-  async function refreshQuota() {
-    try {
+  useEffect(() => {
+    if (!meApi.error) return
+    if (Number(meApi.error?.status || 0) === 401) {
+      const next = encodeURIComponent('/account')
+      window.location.href = `/login?next=${next}`
+      return
+    }
+    if (!meApi.cacheMessage) {
+      setError(String(meApi.error?.message || meApi.error))
+    }
+    setLoading(false)
+  }, [meApi.error, meApi.cacheMessage])
+
+  useEffect(() => {
+    if (!cacheUserId) return
+    if (quotaApi.isLoading && !quotaApi.data) {
       setQuota(prev => ({ ...prev, loading: true, error: '' }))
-      const res = await fetch('/api/user/quota/meeting-notes', { cache: 'no-store' })
-      const data = await res.json().catch(() => null)
-      if (!res.ok || !data?.success) {
-        throw new Error(data?.error || `HTTP ${res.status}`)
-      }
-      setQuota({
-        loading: false,
-        error: '',
-        limit: Number(data?.limit || 0),
-        usedCount: Number(data?.usedCount || 0),
-        remaining: Number(data?.remaining || 0)
-      })
-    } catch (err) {
+      return
+    }
+    if (quotaApi.error && !quotaApi.data) {
       setQuota(prev => ({
         ...prev,
         loading: false,
-        error: String(err?.message || err)
+        error: String(quotaApi.error?.message || quotaApi.error)
       }))
+      return
     }
-  }
+    const data = quotaApi.data
+    if (!data || data.success !== true) return
+    setQuota({
+      loading: Boolean(quotaApi.isLoading),
+      error: quotaApi.error ? String(quotaApi.error?.message || quotaApi.error) : '',
+      limit: Number(data?.limit || 0),
+      usedCount: Number(data?.usedCount || 0),
+      remaining: Number(data?.remaining || 0)
+    })
+  }, [cacheUserId, quotaApi.data, quotaApi.error, quotaApi.isLoading])
 
   async function saveProfile() {
     setProfileBusy(true)
@@ -88,6 +110,7 @@ export default function AccountPage() {
       }
       setDisplayName(String(data?.user?.displayName || name))
       setMessage('用户名已更新')
+      void meApi.refresh()
     } catch (err) {
       setError(String(err?.message || err))
     } finally {
@@ -170,6 +193,16 @@ export default function AccountPage() {
       {!quota.loading && quota.error && (
         <div className="ui-notice ui-notice-error" style={{ marginBottom: 14 }}>
           会议纪要余额加载失败: {quota.error}
+        </div>
+      )}
+      {meApi.cacheMessage && (
+        <div className="ui-notice ui-notice-info" style={{ marginBottom: 14 }}>
+          {meApi.cacheMessage}
+        </div>
+      )}
+      {quotaApi.cacheMessage && (
+        <div className="ui-notice ui-notice-info" style={{ marginBottom: 14 }}>
+          {quotaApi.cacheMessage}
         </div>
       )}
 

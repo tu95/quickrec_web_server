@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import ConfigEditorForm from './config-editor-form'
+import { useCachedApi } from './_lib/use-cached-api'
 
 const USER_SYSTEM_DEFAULT_ID = '__system_default__'
 
@@ -17,11 +18,11 @@ export default function ConfigProfilesManager({
   mode = 'user',
   title,
   subtitle,
+  cacheUserId = '',
   hideAccess = false,
   allowTesting = false,
   hideHeader = false
 }) {
-  const [loading, setLoading] = useState(true)
   const [busyMap, setBusyMap] = useState({})
   const [saveBusy, setSaveBusy] = useState(false)
   const [profiles, setProfiles] = useState([])
@@ -32,10 +33,30 @@ export default function ConfigProfilesManager({
   const [selectedConfig, setSelectedConfig] = useState(null)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const listApi = useCachedApi({
+    apiPath: mode === 'admin' ? '/api/admin/config-profiles' : '/api/user/config-profiles',
+    userId: cacheUserId,
+    ttlMs: 60 * 1000,
+    enabled: true,
+    initialData: null,
+    successGuard: payload => !!(payload?.success && Array.isArray(payload?.profiles))
+  })
 
   useEffect(() => {
-    void loadProfiles()
-  }, [mode])
+    const payload = listApi.data
+    if (!payload || payload.success !== true) return
+    applyProfiles(payload)
+  }, [listApi.data])
+
+  useEffect(() => {
+    if (!listApi.error) return
+    if (Number(listApi.error?.status) === 401) {
+      redirectToLogin()
+      return
+    }
+    if (listApi.cacheMessage) return
+    setError(String(listApi.error?.message || listApi.error))
+  }, [listApi.error, listApi.cacheMessage])
 
   function redirectToLogin() {
     if (typeof window === 'undefined') return
@@ -95,21 +116,21 @@ export default function ConfigProfilesManager({
     setSelectedConfig(target?.config || null)
   }
 
+  function cloneConfig(input) {
+    if (!input || typeof input !== 'object') return null
+    try {
+      return JSON.parse(JSON.stringify(input))
+    } catch {
+      return null
+    }
+  }
+
   async function loadProfiles() {
-    setLoading(true)
     setError('')
     try {
-      const res = await fetch(getListEndpoint(), { cache: 'no-store' })
-      const data = await res.json().catch(() => null)
-      if (handleAuthFailure(res.status)) return
-      if (!res.ok || !data?.success) {
-        throw new Error(data?.error || `加载失败: HTTP ${res.status}`)
-      }
-      applyProfiles(data)
+      await listApi.refresh()
     } catch (err) {
       setError(String(err?.message || err))
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -123,9 +144,30 @@ export default function ConfigProfilesManager({
   }
 
   async function createProfile() {
+    const tempId = `pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const previousSelectedId = selectedId
+    const previousSelectedName = selectedName
+    const previousSelectedConfig = selectedConfig
+    const tempConfig =
+      cloneConfig(selectedConfig)
+      || cloneConfig(systemDefaultProfile?.config)
+      || cloneConfig(profiles[0]?.config)
+      || null
+    const tempProfile = {
+      id: tempId,
+      name: '新配置（创建中）',
+      config: tempConfig,
+      isActive: false
+    }
+
     setBusyMap(prev => ({ ...prev, create: true }))
     setError('')
     setMessage('')
+    setProfiles(prev => [tempProfile, ...prev])
+    setSelectedId(tempId)
+    setSelectedName(tempProfile.name)
+    setSelectedConfig(tempProfile.config)
+
     try {
       const res = await fetch(getCreateEndpoint(), {
         method: 'POST',
@@ -137,10 +179,15 @@ export default function ConfigProfilesManager({
       if (!res.ok || !data?.success || !data?.profile) {
         throw new Error(data?.error || `创建失败: HTTP ${res.status}`)
       }
-      await loadProfiles()
+      setProfiles(prev => prev.map(item => (item.id === tempId ? data.profile : item)))
       syncSelectedProfile(data.profile)
       setMessage('已新增自定义配置')
+      listApi.refresh().catch(() => {})
     } catch (err) {
+      setProfiles(prev => prev.filter(item => item.id !== tempId))
+      setSelectedId(previousSelectedId)
+      setSelectedName(previousSelectedName)
+      setSelectedConfig(previousSelectedConfig)
       setError(String(err?.message || err))
     } finally {
       setBusyMap(prev => ({ ...prev, create: false }))
@@ -289,6 +336,8 @@ export default function ConfigProfilesManager({
     return {}
   }
 
+  const loading = !listApi.data && !listApi.error && listApi.isLoading
+
   if (loading) {
     return <div className="ui-notice">配置加载中...</div>
   }
@@ -315,6 +364,7 @@ export default function ConfigProfilesManager({
 
       {message && <div className="ui-notice ui-notice-success">{message}</div>}
       {error && <div className="ui-notice ui-notice-error">{error}</div>}
+      {listApi.cacheMessage && <div className="ui-notice ui-notice-info">{listApi.cacheMessage}</div>}
 
       <div className="config-profiles-layout" style={layoutStyle}>
         <aside className="config-profiles-sidebar" style={sidebarStyle}>

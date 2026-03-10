@@ -22,12 +22,18 @@
     "@supabase/supabase-js": "^2.98.0",
     "ali-oss": "^6.23.0",
     "multiparty": "^4.2.3",
-    "next": "14.x",
+    "next": "16.1.6",
     "opusscript": "^0.1.1",
     "p-queue": "^9.1.0",
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
+    "proxy-agent": "^5.0.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "swr": "^2.4.1"
+  },
+  "engines": {
+    "node": ">=24.14.0 <25",
+    "npm": ">=11"
   }
 }

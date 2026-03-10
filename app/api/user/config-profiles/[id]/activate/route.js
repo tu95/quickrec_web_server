@@ -10,7 +10,8 @@ export async function POST(request, { params }) {
     return Response.json({ success: false, error: auth.error }, { status: auth.status || 401 })
   }
   try {
-    const profile = await activateUserConfigProfile(auth.user?.id, String(params?.id || '').trim())
+    const routeParams = await params
+    const profile = await activateUserConfigProfile(auth.user?.id, String(routeParams?.id || '').trim())
     return Response.json({
       success: true,
       profile: {

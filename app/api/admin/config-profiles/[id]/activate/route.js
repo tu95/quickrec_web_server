@@ -10,7 +10,8 @@ export async function POST(request, { params }) {
     return Response.json({ success: false, error: auth.error }, { status: auth.status })
   }
   try {
-    const profile = await activateSystemConfigProfile(String(params?.id || '').trim(), auth.user?.id)
+    const routeParams = await params
+    const profile = await activateSystemConfigProfile(String(routeParams?.id || '').trim(), auth.user?.id)
     return Response.json({
       success: true,
       profile: {

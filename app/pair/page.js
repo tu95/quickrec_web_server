@@ -1,6 +1,10 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCachedApi } from '../_lib/use-cached-api'
+import { clearCurrentUserApiCaches } from '../_lib/client-cache'
+
+const PAIR_CODE_LENGTH = 6
 
 function maskToken(token) {
   const text = String(token || '')
@@ -28,49 +32,188 @@ export default function PairPage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [deletingDeviceId, setDeletingDeviceId] = useState('')
-  const [pairCode, setPairCode] = useState('')
+  const [pairDigits, setPairDigits] = useState(() => Array(PAIR_CODE_LENGTH).fill(''))
+  const [cacheUserId, setCacheUserId] = useState('')
   const [user, setUser] = useState(null)
   const [devices, setDevices] = useState([])
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [latestSessionToken, setLatestSessionToken] = useState('')
   const [latestSessionExpiresAt, setLatestSessionExpiresAt] = useState('')
+  const pairInputRefs = useRef([])
+  const pairCode = useMemo(() => pairDigits.join(''), [pairDigits])
+  const pairCodeReady = useMemo(
+    () => pairDigits.every(item => /^\d$/.test(item)),
+    [pairDigits]
+  )
+  const meApi = useCachedApi({
+    apiPath: '/api/user-auth/me',
+    userId: cacheUserId || 'session-auth',
+    ttlMs: 30 * 1000,
+    enabled: true,
+    allowUserIdFallback: false,
+    initialData: null,
+    successGuard: payload => !!(payload?.success && typeof payload?.authenticated === 'boolean')
+  })
+  const devicesApi = useCachedApi({
+    apiPath: '/api/user/devices',
+    userId: cacheUserId,
+    ttlMs: 60 * 1000,
+    enabled: Boolean(cacheUserId),
+    initialData: null,
+    successGuard: (payload) => !!(payload?.success && Array.isArray(payload?.devices))
+  })
 
   useEffect(() => {
-    bootstrap().catch(() => {})
-  }, [])
+    const data = meApi.data
+    if (!data || data.success !== true) return
+    if (!data.authenticated) {
+      const next = encodeURIComponent('/pair')
+      window.location.href = `/login?next=${next}`
+      return
+    }
+    setUser(data.user || null)
+    setCacheUserId(String(data?.user?.id || '').trim())
+    setLoading(false)
+  }, [meApi.data])
+
+  useEffect(() => {
+    if (!meApi.error) return
+    if (Number(meApi.error?.status || 0) === 401) {
+      const next = encodeURIComponent('/pair')
+      window.location.href = `/login?next=${next}`
+      return
+    }
+    if (!meApi.cacheMessage) {
+      setError(String(meApi.error?.message || meApi.error))
+    }
+    setLoading(false)
+  }, [meApi.error, meApi.cacheMessage])
+
+  useEffect(() => {
+    const data = devicesApi.data
+    if (!data || data.success !== true || !Array.isArray(data.devices)) return
+    setDevices(data.devices)
+  }, [devicesApi.data])
+
+  useEffect(() => {
+    if (!devicesApi.error) return
+    if (devicesApi.cacheMessage) return
+    setError(String(devicesApi.error?.message || devicesApi.error))
+  }, [devicesApi.error, devicesApi.cacheMessage])
 
   const sortedDevices = useMemo(() => {
     return [...devices].sort((a, b) => String(b.boundAt || '').localeCompare(String(a.boundAt || '')))
   }, [devices])
 
-  async function bootstrap() {
-    setLoading(true)
-    setError('')
-    try {
-      const meRes = await fetch('/api/user-auth/me', { cache: 'no-store' })
-      const meData = await meRes.json().catch(() => null)
-      if (!meRes.ok || !meData?.success || !meData?.authenticated) {
-        const next = encodeURIComponent('/pair')
-        window.location.href = `/login?next=${next}`
-        return
-      }
-      setUser(meData.user || null)
-      await loadDevices()
-    } catch (err) {
-      setError(String(err?.message || err))
-    } finally {
-      setLoading(false)
+  async function loadDevices() {
+    await devicesApi.refresh()
+  }
+
+  function focusPairInput(index) {
+    const next = Number(index)
+    if (!Number.isInteger(next)) return
+    if (next < 0 || next >= PAIR_CODE_LENGTH) return
+    const input = pairInputRefs.current[next]
+    if (!input || typeof input.focus !== 'function') return
+    input.focus()
+    if (typeof input.select === 'function') {
+      input.select()
     }
   }
 
-  async function loadDevices() {
-    const res = await fetch('/api/user/devices', { cache: 'no-store' })
-    const data = await res.json().catch(() => null)
-    if (!res.ok || !data?.success) {
-      throw new Error(data?.error || `加载设备失败: HTTP ${res.status}`)
+  function fillPairDigitsFrom(startIndex, rawDigits) {
+    const digits = String(rawDigits || '').replace(/\D/g, '')
+    if (!digits) return
+    setPairDigits(prev => {
+      const next = Array.isArray(prev) ? [...prev] : Array(PAIR_CODE_LENGTH).fill('')
+      let cursor = Number(startIndex)
+      for (const digit of digits) {
+        if (cursor < 0 || cursor >= PAIR_CODE_LENGTH) break
+        next[cursor] = digit
+        cursor += 1
+      }
+      return next
+    })
+    const focusIndex = Math.min(startIndex + digits.length, PAIR_CODE_LENGTH - 1)
+    window.setTimeout(() => {
+      focusPairInput(focusIndex)
+    }, 0)
+  }
+
+  function handlePairDigitChange(index, rawValue) {
+    const onlyDigits = String(rawValue || '').replace(/\D/g, '')
+    if (!onlyDigits) {
+      setPairDigits(prev => {
+        const next = [...prev]
+        next[index] = ''
+        return next
+      })
+      return
     }
-    setDevices(Array.isArray(data.devices) ? data.devices : [])
+    if (onlyDigits.length > 1) {
+      fillPairDigitsFrom(index, onlyDigits)
+      return
+    }
+    const digit = onlyDigits.slice(0, 1)
+    setPairDigits(prev => {
+      const next = [...prev]
+      next[index] = digit
+      return next
+    })
+    if (index < PAIR_CODE_LENGTH - 1) {
+      window.setTimeout(() => {
+        focusPairInput(index + 1)
+      }, 0)
+    }
+  }
+
+  function handlePairDigitKeyDown(index, event) {
+    const key = String(event?.key || '')
+    if (key === 'Backspace') {
+      const current = String(pairDigits[index] || '')
+      if (!current && index > 0) {
+        setPairDigits(prev => {
+          const next = [...prev]
+          next[index - 1] = ''
+          return next
+        })
+        window.setTimeout(() => {
+          focusPairInput(index - 1)
+        }, 0)
+      }
+      return
+    }
+    if (key === 'ArrowLeft' && index > 0) {
+      event.preventDefault()
+      focusPairInput(index - 1)
+      return
+    }
+    if (key === 'ArrowRight' && index < PAIR_CODE_LENGTH - 1) {
+      event.preventDefault()
+      focusPairInput(index + 1)
+      return
+    }
+    if (key === 'Enter') {
+      event.preventDefault()
+      if (pairCodeReady && !busy && !loading) {
+        void bindPairCode()
+      } else {
+        setError('请输入完整 6 位配对码')
+      }
+      return
+    }
+    if (key.length === 1 && /\D/.test(key)) {
+      event.preventDefault()
+    }
+  }
+
+  function handlePairPaste(event) {
+    event.preventDefault()
+    const pasted = String(event?.clipboardData?.getData('text') || '')
+    const digits = pasted.replace(/\D/g, '')
+    if (!digits) return
+    fillPairDigitsFrom(0, digits)
   }
 
   async function bindPairCode() {
@@ -79,8 +222,8 @@ export default function PairPage() {
     setMessage('')
     try {
       const code = String(pairCode || '').trim()
-      if (!code) {
-        throw new Error('请输入配对码')
+      if (!/^\d{6}$/.test(code)) {
+        throw new Error('请输入完整 6 位配对码')
       }
       const res = await fetch('/api/user/devices/bind', {
         method: 'POST',
@@ -94,7 +237,10 @@ export default function PairPage() {
       setMessage(`绑定成功，设备 ${data?.device?.deviceId || data?.device?.id || ''} 已关联到当前账号。`)
       setLatestSessionToken(String(data?.sessionToken || ''))
       setLatestSessionExpiresAt(String(data?.sessionExpiresAt || ''))
-      setPairCode('')
+      setPairDigits(Array(PAIR_CODE_LENGTH).fill(''))
+      window.setTimeout(() => {
+        focusPairInput(0)
+      }, 0)
       await loadDevices()
     } catch (err) {
       setError(String(err?.message || err))
@@ -107,8 +253,10 @@ export default function PairPage() {
     setBusy(true)
     try {
       await fetch('/api/user-auth/logout', { method: 'POST' })
+      clearCurrentUserApiCaches()
       window.location.href = '/login?next=/pair'
     } catch {
+      clearCurrentUserApiCaches()
       window.location.href = '/login?next=/pair'
     } finally {
       setBusy(false)
@@ -154,15 +302,15 @@ export default function PairPage() {
         <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>
           手表端获取配对码后，在这里完成设备绑定。绑定成功后，上传将归属到你的账号。
         </p>
-        {user?.email && (
+        {/* {user?.email && (
           <div className="server-pill" style={{ marginTop: 12 }}>
             <span>当前账号</span>
             <code>{user.email}</code>
           </div>
-        )}
+        )} */}
       </section>
 
-      <section className="panel panel-dark" style={{ marginBottom: 14 }}>
+      {/* <section className="panel panel-dark" style={{ marginBottom: 14 }}>
         <div className="pair-steps">
           <div className="pair-step-card">
             <strong>步骤 1：</strong>在手表设置页获取配对码。
@@ -174,28 +322,37 @@ export default function PairPage() {
             <strong>步骤 3：</strong>设备会话下发后，手表上传即自动归档到当前账号。
           </div>
         </div>
-      </section>
+      </section> */}
 
       <section className="panel panel-dark" style={{ marginBottom: 14 }}>
         <h3 style={{ marginTop: 0, marginBottom: 10 }}>输入配对码</h3>
-        <div className="action-row">
-          <input
-            value={pairCode}
-            onChange={e => setPairCode(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') bindPairCode()
-            }}
-            placeholder="例如 472918"
-            className="ui-input"
-            maxLength={12}
-            style={{ minWidth: 220, flex: 1 }}
-          />
-          <button onClick={bindPairCode} disabled={busy || loading} className="ui-btn ui-btn-primary">
-            {busy ? '绑定中...' : '绑定设备'}
-          </button>
+        <div className="pair-code-wrap">
+          <div className="pair-code-grid" onPaste={handlePairPaste}>
+            {pairDigits.map((digit, index) => (
+              <input
+                key={`pair_digit_${index}`}
+                ref={node => {
+                  pairInputRefs.current[index] = node
+                }}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]*"
+                maxLength={1}
+                value={digit}
+                onChange={event => handlePairDigitChange(index, event.target.value)}
+                onKeyDown={event => handlePairDigitKeyDown(index, event)}
+                className="pair-code-cell"
+                aria-label={`配对码第 ${index + 1} 位`}
+              />
+            ))}
+          </div>
+          <div className="pair-code-hint">例如 472918，输入满 6 位后按回车可直接绑定</div>
         </div>
 
-        <div className="action-row">
+        <div className="action-row pair-action-row">
+          <button onClick={bindPairCode} disabled={busy || loading || !pairCodeReady} className="ui-btn ui-btn-primary">
+            {busy ? '绑定中...' : '绑定设备'}
+          </button>
           <button onClick={logout} disabled={busy} className="ui-btn ui-btn-danger">
             退出登录
           </button>
@@ -203,6 +360,9 @@ export default function PairPage() {
 
         {message && <div className="ui-notice ui-notice-success">{message}</div>}
         {error && <div className="ui-notice ui-notice-error">{error}</div>}
+        {meApi.cacheMessage && (
+          <div className="ui-notice ui-notice-info">{meApi.cacheMessage}</div>
+        )}
 
         {latestSessionToken && (
           <div className="ui-notice ui-notice-info">
@@ -214,7 +374,10 @@ export default function PairPage() {
 
       <section className="panel panel-dark">
         <h3 style={{ marginTop: 0, marginBottom: 10 }}>已绑定设备</h3>
-        {loading ? (
+        {devicesApi.cacheMessage && (
+          <div className="ui-notice ui-notice-info">{devicesApi.cacheMessage}</div>
+        )}
+        {loading || (cacheUserId && devicesApi.isLoading && sortedDevices.length === 0) ? (
           <p className="muted">加载中...</p>
         ) : sortedDevices.length === 0 ? (
           <p className="muted">暂无绑定设备</p>

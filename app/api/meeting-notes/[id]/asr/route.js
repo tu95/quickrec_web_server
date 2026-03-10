@@ -10,7 +10,8 @@ export async function GET(request, { params }) {
     )
   }
 
-  const id = String(params?.id || '').trim()
+  const routeParams = await params
+  const id = String(routeParams?.id || '').trim()
   if (!id) {
     return Response.json(
       { success: false, error: 'invalid note id' },

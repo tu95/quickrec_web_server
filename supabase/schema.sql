@@ -272,13 +272,13 @@ begin
   )
   on conflict (user_id, feature_key) do nothing;
 
-  update public.recorder_usage_counters
-  set used_count = used_count + 1,
+  update public.recorder_usage_counters as counters
+  set used_count = counters.used_count + 1,
       updated_at = now()
-  where user_id = p_user_id
-    and feature_key = p_feature_key
-    and used_count < v_limit
-  returning public.recorder_usage_counters.used_count into v_used;
+  where counters.user_id = p_user_id
+    and counters.feature_key = p_feature_key
+    and counters.used_count < v_limit
+  returning counters.used_count into v_used;
 
   if found then
     return query
@@ -289,11 +289,11 @@ begin
     return;
   end if;
 
-  select public.recorder_usage_counters.used_count
+  select counters.used_count
   into v_used
-  from public.recorder_usage_counters
-  where user_id = p_user_id
-    and feature_key = p_feature_key
+  from public.recorder_usage_counters as counters
+  where counters.user_id = p_user_id
+    and counters.feature_key = p_feature_key
   limit 1;
 
   return query

@@ -22,6 +22,7 @@ export async function POST(request) {
     )
   }
 
+  let consumedQuota = null
   try {
     const quota = await consumeMeetingNotesQuota(String(auth.user?.id || ''))
     if (!quota.allowed) {
@@ -37,6 +38,7 @@ export async function POST(request) {
         { status: 403 }
       )
     }
+    consumedQuota = quota
   } catch (error) {
     return Response.json(
       { success: false, error: String(error?.message || error) },
@@ -56,7 +58,16 @@ export async function POST(request) {
     })
     return Response.json({
       success: true,
-      job
+      job,
+      quota: consumedQuota
+        ? {
+            limit: consumedQuota.limit,
+            usedCount: consumedQuota.usedCount,
+            remaining: consumedQuota.remaining,
+            allowed: consumedQuota.allowed,
+            message: consumedQuota.message
+          }
+        : null
     })
   } catch (error) {
     const text = String(error?.message || error)
