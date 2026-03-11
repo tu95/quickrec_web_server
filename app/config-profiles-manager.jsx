@@ -92,9 +92,26 @@ export default function ConfigProfilesManager({
 
   function getActiveProfileId(nextProfiles, nextSystemDefaultProfile, payload = null) {
     if (isAdminMode()) {
-      return String(payload?.defaultProfileId || nextProfiles.find(item => item.isDefault)?.id || nextProfiles[0]?.id || '')
+      const preferredId = String(payload?.defaultProfileId || '').trim()
+      if (preferredId && nextProfiles.some(item => String(item.id) === preferredId)) {
+        return preferredId
+      }
+      const markedDefaultId = String(nextProfiles.find(item => item.isDefault)?.id || '').trim()
+      if (markedDefaultId) return markedDefaultId
+      return String(nextProfiles[0]?.id || '').trim()
     }
     return String(payload?.activeProfileId || nextProfiles.find(item => item.isActive)?.id || (nextSystemDefaultProfile ? USER_SYSTEM_DEFAULT_ID : ''))
+  }
+
+  function getAdminDefaultProfileId(nextProfiles = profiles) {
+    if (!Array.isArray(nextProfiles) || nextProfiles.length === 0) return ''
+    const currentSelectedId = String(selectedId || '').trim()
+    if (currentSelectedId && nextProfiles.some(item => String(item.id) === currentSelectedId)) {
+      return currentSelectedId
+    }
+    const markedDefaultId = String(nextProfiles.find(item => item.isDefault)?.id || '').trim()
+    if (markedDefaultId) return markedDefaultId
+    return String(nextProfiles[0]?.id || '').trim()
   }
 
   function applyProfiles(payload) {
@@ -384,7 +401,12 @@ export default function ConfigProfilesManager({
                 <button
                   type="button"
                   style={isServiceSelected ? serviceGroupHeaderActiveStyle : serviceGroupHeaderStyle}
-                  onClick={() => selectServiceAndProfile(serviceKey, USER_SYSTEM_DEFAULT_ID)}
+                  onClick={() => {
+                    const targetProfileId = isAdminMode()
+                      ? getAdminDefaultProfileId()
+                      : USER_SYSTEM_DEFAULT_ID
+                    selectServiceAndProfile(serviceKey, targetProfileId)
+                  }}
                 >
                   <span style={serviceIconStyle}>{service.icon}</span>
                   <span style={serviceLabelStyle}>{service.label}</span>

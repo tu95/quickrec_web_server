@@ -30,6 +30,7 @@ cp .env.example .env.local
 - `SUPABASE_AUTH_TIMEOUT_MS=3200`（Auth 请求超时）
 - `SUPABASE_AUTH_RETRY_MAX=2`（Auth 网络失败重试次数）
 - `SUPABASE_AUTH_RETRY_DELAY_MS=180`（Auth 重试间隔毫秒）
+- `ADMIN_SETTINGS_TOKEN=`（可选，设置后管理设置页改为私有路径 `/settings/<token>`，公开 `/settings` 返回 404）
 
 配对码默认有效期为 `1小时`（`PAIR_CODE_TTL_SEC=3600`），可按需在 `.env.local` 调整。
 也支持别名变量 `PAIR_TTL_SECONDS=3600`（优先生效）。
@@ -40,6 +41,14 @@ cp .env.example .env.local
 手机到服务端分片上传支持批量模式，默认每次请求 `1024KB`：
 - `WATCH_UPLOAD_BATCH_MAX_BYTES=1048576`
 - `WATCH_UPLOAD_BATCH_MAX_CHUNKS=16`
+
+管理员设置页私有路径示例（推荐开启）：
+
+```bash
+ADMIN_SETTINGS_TOKEN=your_random_token
+# 访问路径：
+# http://localhost:3000/settings/your_random_token
+```
 
 邮箱注册/找回由 **Supabase Auth** 完成。  
 如果你要用 Brevo 提升邮件频率，请在 Supabase 控制台配置 **Auth -> SMTP -> Enable custom SMTP**：

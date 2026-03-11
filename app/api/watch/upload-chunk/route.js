@@ -460,16 +460,13 @@ export async function POST(request) {
 
     const deviceIdentity = normalizeDeviceIdentity(body)
     const sessionToken = normalizeSessionToken(request, body)
-    if (!deviceIdentity) {
-      return makeClientError('deviceId 不能为空')
-    }
     if (!sessionToken) {
       return makeAuthError('缺少设备会话 token，请先绑定配对码')
     }
 
     let auth
     try {
-      auth = await validateDeviceSessionForUpload(deviceIdentity, sessionToken)
+      auth = await validateDeviceSessionForUpload(sessionToken)
     } catch (authError) {
       return makeAuthError(String(authError?.message || authError))
     }
@@ -488,7 +485,7 @@ export async function POST(request) {
       session = {
         uploadId: cacheKey,
         partPath,
-        deviceIdentity,
+        deviceIdentity: String(deviceIdentity || '').trim(),
         userId,
         deviceDbId,
         fileName: parsed.fileName,
@@ -503,7 +500,7 @@ export async function POST(request) {
       await cleanupTmpPart(partPath)
     }
 
-    if (session.deviceIdentity !== deviceIdentity) {
+    if (session.deviceIdentity && deviceIdentity && session.deviceIdentity !== deviceIdentity) {
       uploadSessionMap.delete(cacheKey)
       await cleanupTmpPart(partPath)
       return makeClientError('uploadId 与设备不匹配')

@@ -58,8 +58,8 @@ export function getSecurityConfig() {
       statusSessionIssueWindowSec: readIntEnv('PAIR_STATUS_SESSION_ISSUE_WINDOW_SEC', 180, 30, 1800),
       maxFails: readIntEnv('PAIR_MAX_FAILS', 30, 1, 100000),
       lockSec: readIntEnv('PAIR_LOCK_SECONDS', 180, 1, 86400),
-      // 开发阶段默认拉长设备会话，避免已绑定设备频繁重新配对。
-      deviceSessionTtlSec: readIntEnv('DEVICE_SESSION_TTL_SEC', 10 * 365 * 24 * 60 * 60, 600, 50 * 365 * 24 * 60 * 60)
+      // 默认 1 年，支持通过环境变量调整。
+      deviceSessionTtlSec: readIntEnv('DEVICE_SESSION_TTL_SEC', 365 * 24 * 60 * 60, 600, 50 * 365 * 24 * 60 * 60)
     },
     proxy: {
       trustForwardedHeaders: readBoolEnv('TRUST_PROXY', false),

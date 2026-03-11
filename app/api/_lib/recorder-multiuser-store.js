@@ -497,31 +497,14 @@ export async function issueDeviceSessionByPairCode(deviceIdentity, pairCode) {
   }
 }
 
-export async function getDeviceSessionStatus(deviceIdentity, sessionToken) {
-  const identity = normalizeDeviceIdentity(deviceIdentity)
-  const token = String(sessionToken || '').trim()
-  if (!identity) throw new Error('设备标识不能为空')
+export async function getDeviceSessionStatus(sessionTokenOrDeviceIdentity, maybeSessionToken) {
+  const token = String(maybeSessionToken || sessionTokenOrDeviceIdentity || '').trim()
   if (!token) throw new Error('设备会话 token 不能为空')
 
   const client = createSupabaseServiceClient()
-  const { data: deviceRows, error: deviceError } = await client
-    .from(TABLE.devices)
-    .select('*')
-    .eq('device_identity', identity)
-    .limit(1)
-  if (deviceError) throw new Error(String(deviceError.message || '读取设备失败'))
-  const device = firstRow(deviceRows)
-  if (!device) {
-    return {
-      active: false,
-      status: 'device_missing'
-    }
-  }
-
   const { data: sessionRows, error: sessionError } = await client
     .from(TABLE.deviceSessions)
     .select('*')
-    .eq('device_id', device.id)
     .eq('session_token', token)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -530,8 +513,23 @@ export async function getDeviceSessionStatus(deviceIdentity, sessionToken) {
   if (!session) {
     return {
       active: false,
-      status: 'session_invalid',
-      device
+      status: 'session_invalid'
+    }
+  }
+
+  const deviceId = String(session.device_id || '').trim()
+  const { data: deviceRows, error: deviceError } = await client
+    .from(TABLE.devices)
+    .select('*')
+    .eq('id', deviceId)
+    .limit(1)
+  if (deviceError) throw new Error(String(deviceError.message || '读取设备失败'))
+  const device = firstRow(deviceRows)
+  if (!device) {
+    return {
+      active: false,
+      status: 'device_missing',
+      sessionExpiresAt: String(session.expires_at || '')
     }
   }
 
@@ -601,27 +599,15 @@ export async function getDeviceSessionStatus(deviceIdentity, sessionToken) {
   }
 }
 
-export async function validateDeviceSessionForUpload(deviceIdentity, sessionToken) {
-  const identity = normalizeDeviceIdentity(deviceIdentity)
-  const token = String(sessionToken || '').trim()
-  if (!identity) throw new Error('设备标识不能为空')
+export async function validateDeviceSessionForUpload(sessionTokenOrDeviceIdentity, maybeSessionToken) {
+  const token = String(maybeSessionToken || sessionTokenOrDeviceIdentity || '').trim()
   if (!token) throw new Error('设备会话 token 不能为空')
 
   const client = createSupabaseServiceClient()
-  const { data: deviceRows, error: deviceError } = await client
-    .from(TABLE.devices)
-    .select('*')
-    .eq('device_identity', identity)
-    .limit(1)
-  if (deviceError) throw new Error(String(deviceError.message || '读取设备失败'))
-  const device = firstRow(deviceRows)
-  if (!device) throw new Error('设备未绑定，请先配对')
-
   const now = nowIso()
   const { data: sessionRows, error: sessionError } = await client
     .from(TABLE.deviceSessions)
     .select('*')
-    .eq('device_id', device.id)
     .eq('session_token', token)
     .eq('status', 'active')
     .gt('expires_at', now)
@@ -630,6 +616,29 @@ export async function validateDeviceSessionForUpload(deviceIdentity, sessionToke
   const session = firstRow(sessionRows)
   if (!session) throw new Error('设备会话已失效，请重新配对')
 
+  const deviceId = String(session.device_id || '').trim()
+  const { data: deviceRows, error: deviceError } = await client
+    .from(TABLE.devices)
+    .select('*')
+    .eq('id', deviceId)
+    .limit(1)
+  if (deviceError) throw new Error(String(deviceError.message || '读取设备失败'))
+  const device = firstRow(deviceRows)
+  if (!device) throw new Error('设备未绑定，请先配对')
+
+  const sessionUserId = String(session.user_id || '').trim()
+  if (!sessionUserId) throw new Error('设备会话已失效，请重新配对')
+
+  const { data: bindRows, error: bindError } = await client
+    .from(TABLE.userDevices)
+    .select('id')
+    .eq('device_id', device.id)
+    .eq('user_id', sessionUserId)
+    .eq('status', 'active')
+    .limit(1)
+  if (bindError) throw new Error(String(bindError.message || '读取设备绑定关系失败'))
+  if (!firstRow(bindRows)) throw new Error('设备未绑定，请先配对')
+
   await client
     .from(TABLE.deviceSessions)
     .update({ last_seen_at: now, updated_at: now })
@@ -637,7 +646,7 @@ export async function validateDeviceSessionForUpload(deviceIdentity, sessionToke
 
   return {
     device,
-    userId: String(session.user_id || '')
+    userId: sessionUserId
   }
 }
 

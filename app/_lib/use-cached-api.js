@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo } from 'react'
+import { useEffect, useState } from 'react'
 import useSWR from 'swr'
 import {
   getCachedUserId,
@@ -43,22 +43,19 @@ export function useCachedApi({
   const safeUserId = normalizeUserId(userId, allowUserIdFallback)
   const effectiveTtlMs = Number.isFinite(Number(ttlMs)) ? Number(ttlMs) : Number(policy.ttlMs || 0)
   const effectiveCacheable = typeof cacheable === 'boolean' ? cacheable : Boolean(policy.cacheable)
+  const [cacheSnapshot, setCacheSnapshot] = useState({
+    hit: false,
+    stale: false,
+    data: null,
+    updatedAt: 0
+  })
 
   useEffect(() => {
     if (!userId) return
     setCachedUserId(userId)
   }, [userId])
 
-  const cached = useMemo(() => {
-    if (!effectiveCacheable) return { hit: false, stale: false, data: null }
-    if (!safeApiPath || !enabled) return { hit: false, stale: false, data: null }
-    if (!safeUserId) return { hit: false, stale: false, data: null }
-    return readApiCache(safeUserId, safeApiPath, effectiveTtlMs)
-  }, [safeApiPath, safeUserId, effectiveTtlMs, enabled, effectiveCacheable])
-
-  const fallbackData = cached.hit
-    ? cached.data
-    : (initialData !== undefined ? initialData : null)
+  const fallbackData = initialData !== undefined ? initialData : null
 
   const swr = useSWR(
     enabled && safeApiPath ? ['api-cache', safeUserId, safeApiPath] : null,
@@ -95,12 +92,31 @@ export function useCachedApi({
     }
   )
 
-  const showCachedOnError = Boolean(swr.error) && Boolean(cached.hit || fallbackData)
+  useEffect(() => {
+    if (!enabled || !safeApiPath || !effectiveCacheable || !safeUserId) {
+      setCacheSnapshot({ hit: false, stale: false, data: null, updatedAt: 0 })
+      return
+    }
+    const cached = readApiCache(safeUserId, safeApiPath, effectiveTtlMs)
+    setCacheSnapshot(cached)
+    if (cached.hit) {
+      swr.mutate(cached.data, { revalidate: false }).catch(() => {})
+    }
+  }, [
+    enabled,
+    safeApiPath,
+    safeUserId,
+    effectiveTtlMs,
+    effectiveCacheable,
+    swr.mutate
+  ])
+
+  const showCachedOnError = Boolean(swr.error) && Boolean(cacheSnapshot.hit || fallbackData)
 
   return {
     ...swr,
     cacheMessage: showCachedOnError ? '同步失败，显示缓存' : '',
-    cachedAt: cached.updatedAt || 0,
+    cachedAt: cacheSnapshot.updatedAt || 0,
     clearCache: () => {
       if (!safeUserId) return
       invalidateApiCache(safeUserId, safeApiPath)
