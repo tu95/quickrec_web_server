@@ -8,3 +8,5 @@
 /uploads/*.wav
 .DS_Store
 *.log
+.next-*/*
+uploads_tmp/*
