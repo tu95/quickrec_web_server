@@ -119,10 +119,14 @@ export async function ensureDevice(identity, identitySource, deviceSource) {
   const sourceTag = String(deviceSource || '').trim()
   const payload = {
     device_identity: deviceIdentity,
-    identity_source: source || 'unknown',
-    device_source: sourceTag || '',
     last_seen_at: now,
     updated_at: now
+  }
+  if (source) {
+    payload.identity_source = source
+  }
+  if (sourceTag) {
+    payload.device_source = sourceTag
   }
   const { data, error } = await client
     .from(TABLE.devices)
@@ -133,6 +137,39 @@ export async function ensureDevice(identity, identitySource, deviceSource) {
   const row = firstRow(data)
   if (!row) throw new Error('写入设备失败：空结果')
   return row
+}
+
+export async function touchDeviceMetadata(identity, identitySource, deviceSource) {
+  const deviceIdentity = normalizeDeviceIdentity(identity)
+  if (!deviceIdentity) return null
+  const source = String(identitySource || '').trim()
+  const sourceTag = String(deviceSource || '').trim()
+  if (!source && !sourceTag) {
+    return getDeviceByIdentity(deviceIdentity)
+  }
+
+  const client = createSupabaseServiceClient()
+  const now = nowIso()
+  const patch = {
+    last_seen_at: now,
+    updated_at: now
+  }
+  if (source) {
+    patch.identity_source = source
+  }
+  if (sourceTag) {
+    patch.device_source = sourceTag
+  }
+  const { data, error } = await client
+    .from(TABLE.devices)
+    .update(patch)
+    .eq('device_identity', deviceIdentity)
+    .select('*')
+    .limit(1)
+  if (error) throw new Error(String(error.message || '更新设备信息失败'))
+  const row = firstRow(data)
+  if (row) return row
+  return ensureDevice(deviceIdentity, source, sourceTag)
 }
 
 export async function createPairCodeForDevice(deviceIdentity, identitySource, deviceSource, options) {

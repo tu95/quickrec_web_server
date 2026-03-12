@@ -1,6 +1,6 @@
 import { getSupabaseConfigError } from '../../_lib/supabase-client'
 import { issueDeviceSessionByPairCode } from '../../_lib/recorder-multiuser-store'
-import { buildRateLimitResponse, consumeRateLimit, getClientIp, resetRateLimit } from '../../_lib/rate-limit'
+import { buildRateLimitResponse, consumeRateLimit, getClientIp } from '../../_lib/rate-limit'
 import { getSecurityConfig } from '../../_lib/security-config'
 
 function normalizeDeviceIdentity(body) {
@@ -9,6 +9,7 @@ function normalizeDeviceIdentity(body) {
 }
 
 export async function POST(request) {
+  // 这个接口主要是轮询配对结果，成功后返回设备会话信息。
   const configError = getSupabaseConfigError()
   if (configError) {
     return Response.json(
@@ -29,7 +30,6 @@ export async function POST(request) {
     }
     const security = getSecurityConfig()
     const ip = getClientIp(request)
-    const failKey = `pair_fail:${ip}:${deviceIdentity}`
     const limiter = consumeRateLimit(
       `pair_status:${ip}:${deviceIdentity}`,
       security.rateLimit.pairStatus.max,
@@ -40,18 +40,6 @@ export async function POST(request) {
     }
 
     const result = await issueDeviceSessionByPairCode(deviceIdentity, pairCode)
-    if (result.paired) {
-      resetRateLimit(failKey)
-    } else {
-      const failLimiter = consumeRateLimit(
-        failKey,
-        security.pair.maxFails,
-        security.pair.lockSec
-      )
-      if (!failLimiter.ok) {
-        return buildRateLimitResponse('配对失败过多，请稍后重试', failLimiter.retryAfterSec)
-      }
-    }
     return Response.json({
       success: true,
       paired: !!result.paired,
