@@ -1,6 +1,5 @@
 [build]
-builder = "NIXPACKS"
-buildCommand = "npm ci --include=dev && npm run build"
+builder = "RAILPACK"
 
 [deploy]
 startCommand = "npm run start"
