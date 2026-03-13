@@ -39,8 +39,8 @@ cp .env.example .env.local
 - `PAIR_LOCK_SECONDS=180`
 
 手机到服务端分片上传支持批量模式，默认每次请求 `1024KB`：
-- `WATCH_UPLOAD_BATCH_MAX_BYTES=1048576`
-- `WATCH_UPLOAD_BATCH_MAX_CHUNKS=16`
+- `WATCH_UPLOAD_BATCH_MAX_BYTES=2097152`
+- `WATCH_UPLOAD_BATCH_MAX_CHUNKS=64`
 
 管理员设置页私有路径示例（推荐开启）：
 

@@ -20,12 +20,14 @@ const CORS_HEADERS = {
 
 const MAX_UPLOAD_BYTES = 120 * 1024 * 1024
 const MAX_BATCH_UPLOAD_BYTES = (() => {
-  const value = Number(process.env.WATCH_UPLOAD_BATCH_MAX_BYTES || 1024 * 1024)
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 1024 * 1024
+  // 手机批量上传默认走 2MB，减少大文件时的 HTTP 往返次数。
+  const value = Number(process.env.WATCH_UPLOAD_BATCH_MAX_BYTES || 2 * 1024 * 1024)
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 2 * 1024 * 1024
 })()
 const MAX_BATCH_CHUNKS = (() => {
-  const value = Number(process.env.WATCH_UPLOAD_BATCH_MAX_CHUNKS || 16)
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 16
+  // 和 32KB 固定片配套，默认放开到 64 片（约 2MB）。
+  const value = Number(process.env.WATCH_UPLOAD_BATCH_MAX_CHUNKS || 64)
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 64
 })()
 const UPLOAD_SESSION_STALE_MS = 25 * 60 * 1000
 const ASYNC_UPLOAD_MAX_RETRIES = 3
