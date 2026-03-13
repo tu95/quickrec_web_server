@@ -7,7 +7,8 @@
   "steps": {
     "install": {
       "commands": [
-        "if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi"
+        "apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*",
+        "if [ -f package.json ]; then if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi; elif [ -f quickrec_web_server/package.json ]; then cd quickrec_web_server && if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi; else echo \"package.json not found in root or quickrec_web_server\"; exit 1; fi"
       ]
     },
     "build": {
@@ -17,11 +18,11 @@
         }
       ],
       "commands": [
-        "npm run build"
+        "if [ -f package.json ]; then npm run build; elif [ -f quickrec_web_server/package.json ]; then cd quickrec_web_server && npm run build; else echo \"package.json not found in root or quickrec_web_server\"; exit 1; fi"
       ]
     }
   },
   "deploy": {
-    "startCommand": "npm run start"
+    "startCommand": "sh -lc 'if [ -f package.json ]; then npm run start; elif [ -f quickrec_web_server/package.json ]; then cd quickrec_web_server && npm run start; else echo \"package.json not found in root or quickrec_web_server\"; exit 1; fi'"
   }
 }
