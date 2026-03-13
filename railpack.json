@@ -7,8 +7,7 @@
   "steps": {
     "install": {
       "commands": [
-        "npm install -g npm@11",
-        "npm ci"
+        "if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi"
       ]
     },
     "build": {
