@@ -1,28 +1,9 @@
 {
   "$schema": "https://schema.railpack.com",
-  "provider": "node",
   "packages": {
     "node": "24"
   },
-  "steps": {
-    "install": {
-      "commands": [
-        "apt-get update && apt-get install -y --no-install-recommends ffmpeg git ca-certificates && rm -rf /var/lib/apt/lists/*",
-        "set -eux; echo [railpack] install_cwd=$(pwd); ls -la; SRC_DIR=.; if [ -f package.json ]; then SRC_DIR=.; elif [ -f quickrec_web_server/package.json ]; then SRC_DIR=quickrec_web_server; elif [ -f web_server/package.json ]; then SRC_DIR=web_server; else echo [railpack] package_json_not_found_fallback_clone_quickrec_web_server; rm -rf /tmp/quickrec_web_server; git clone --depth 1 https://github.com/tu95/quickrec_web_server.git /tmp/quickrec_web_server; SRC_DIR=/tmp/quickrec_web_server; fi; if [ $SRC_DIR != . ]; then echo [railpack] sync_$SRC_DIR_to_/app; cp -a $SRC_DIR/. /app/; fi; cd /app; echo [railpack] install_app_dir=$(pwd); ls -la; if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi"
-      ]
-    },
-    "build": {
-      "inputs": [
-        {
-          "step": "install"
-        }
-      ],
-      "commands": [
-        "set -eux; cd /app; echo [railpack] build_dir=$(pwd); ls -la; npm run build"
-      ]
-    }
-  },
   "deploy": {
-    "startCommand": "sh -lc 'set -eux; cd /app; echo [railpack] start_dir=$(pwd); npm run start'"
+    "startCommand": "npm run start"
   }
 }
