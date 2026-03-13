@@ -7,8 +7,8 @@
   "steps": {
     "install": {
       "commands": [
-        "apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*",
-        "if [ -f package.json ]; then if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi; elif [ -f quickrec_web_server/package.json ]; then cd quickrec_web_server && if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi; else echo \"package.json not found in root or quickrec_web_server\"; exit 1; fi"
+        "apt-get update && apt-get install -y --no-install-recommends ffmpeg git ca-certificates && rm -rf /var/lib/apt/lists/*",
+        "set -e; APP_DIR=''; for d in . quickrec_web_server web_server; do if [ -f \"$d/package.json\" ]; then APP_DIR=\"$d\"; break; fi; done; if [ -z \"$APP_DIR\" ]; then echo \"[railpack] package.json not found, fallback clone quickrec_web_server\"; git clone --depth 1 https://github.com/tu95/quickrec_web_server.git /tmp/quickrec_web_server; APP_DIR=/tmp/quickrec_web_server; fi; echo \"$APP_DIR\" > /tmp/railpack_app_dir; cd \"$APP_DIR\"; if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi"
       ]
     },
     "build": {
@@ -18,11 +18,11 @@
         }
       ],
       "commands": [
-        "if [ -f package.json ]; then npm run build; elif [ -f quickrec_web_server/package.json ]; then cd quickrec_web_server && npm run build; else echo \"package.json not found in root or quickrec_web_server\"; exit 1; fi"
+        "set -e; APP_DIR=''; if [ -f /tmp/railpack_app_dir ]; then APP_DIR=$(cat /tmp/railpack_app_dir); fi; if [ -z \"$APP_DIR\" ]; then for d in . quickrec_web_server web_server /tmp/quickrec_web_server; do if [ -f \"$d/package.json\" ]; then APP_DIR=\"$d\"; break; fi; done; fi; if [ -z \"$APP_DIR\" ]; then echo \"[railpack] package.json not found for build\"; exit 1; fi; cd \"$APP_DIR\"; npm run build"
       ]
     }
   },
   "deploy": {
-    "startCommand": "sh -lc 'if [ -f package.json ]; then npm run start; elif [ -f quickrec_web_server/package.json ]; then cd quickrec_web_server && npm run start; else echo \"package.json not found in root or quickrec_web_server\"; exit 1; fi'"
+    "startCommand": "sh -lc 'set -e; APP_DIR=\"\"; if [ -f /tmp/railpack_app_dir ]; then APP_DIR=$(cat /tmp/railpack_app_dir); fi; if [ -z \"$APP_DIR\" ]; then for d in . quickrec_web_server web_server /tmp/quickrec_web_server; do if [ -f \"$d/package.json\" ]; then APP_DIR=\"$d\"; break; fi; done; fi; if [ -z \"$APP_DIR\" ]; then echo \"[railpack] package.json not found for start\"; exit 1; fi; cd \"$APP_DIR\"; npm run start'"
   }
 }
