@@ -8,7 +8,7 @@
     "install": {
       "commands": [
         "apt-get update && apt-get install -y --no-install-recommends ffmpeg git ca-certificates && rm -rf /var/lib/apt/lists/*",
-        "set -e; APP_DIR=''; for d in . quickrec_web_server web_server; do if [ -f \"$d/package.json\" ]; then APP_DIR=\"$d\"; break; fi; done; if [ -z \"$APP_DIR\" ]; then echo \"[railpack] package.json not found, fallback clone quickrec_web_server\"; git clone --depth 1 https://github.com/tu95/quickrec_web_server.git /tmp/quickrec_web_server; APP_DIR=/tmp/quickrec_web_server; fi; echo \"$APP_DIR\" > /tmp/railpack_app_dir; cd \"$APP_DIR\"; if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi"
+        "set -eux; echo \"[railpack] install cwd=$(pwd)\"; ls -la; if [ -f package.json ]; then echo \"[railpack] using root package.json\"; cd .; elif [ -f quickrec_web_server/package.json ]; then echo \"[railpack] using quickrec_web_server/package.json\"; cd quickrec_web_server; elif [ -f web_server/package.json ]; then echo \"[railpack] using web_server/package.json\"; cd web_server; else echo \"[railpack] package.json not found, fallback clone quickrec_web_server\"; git clone --depth 1 https://github.com/tu95/quickrec_web_server.git /tmp/quickrec_web_server; cd /tmp/quickrec_web_server; fi; pwd > /tmp/railpack_app_dir; echo \"[railpack] app dir=$(cat /tmp/railpack_app_dir)\"; ls -la; if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi"
       ]
     },
     "build": {
@@ -18,11 +18,11 @@
         }
       ],
       "commands": [
-        "set -e; APP_DIR=''; if [ -f /tmp/railpack_app_dir ]; then APP_DIR=$(cat /tmp/railpack_app_dir); fi; if [ -z \"$APP_DIR\" ]; then for d in . quickrec_web_server web_server /tmp/quickrec_web_server; do if [ -f \"$d/package.json\" ]; then APP_DIR=\"$d\"; break; fi; done; fi; if [ -z \"$APP_DIR\" ]; then echo \"[railpack] package.json not found for build\"; exit 1; fi; cd \"$APP_DIR\"; npm run build"
+        "set -eux; if [ -f /tmp/railpack_app_dir ]; then cd \"$(cat /tmp/railpack_app_dir)\"; elif [ -f package.json ]; then cd .; elif [ -f quickrec_web_server/package.json ]; then cd quickrec_web_server; elif [ -f web_server/package.json ]; then cd web_server; elif [ -f /tmp/quickrec_web_server/package.json ]; then cd /tmp/quickrec_web_server; else echo \"[railpack] package.json not found for build\"; exit 1; fi; echo \"[railpack] build dir=$(pwd)\"; ls -la; npm run build"
       ]
     }
   },
   "deploy": {
-    "startCommand": "sh -lc 'set -e; APP_DIR=\"\"; if [ -f /tmp/railpack_app_dir ]; then APP_DIR=$(cat /tmp/railpack_app_dir); fi; if [ -z \"$APP_DIR\" ]; then for d in . quickrec_web_server web_server /tmp/quickrec_web_server; do if [ -f \"$d/package.json\" ]; then APP_DIR=\"$d\"; break; fi; done; fi; if [ -z \"$APP_DIR\" ]; then echo \"[railpack] package.json not found for start\"; exit 1; fi; cd \"$APP_DIR\"; npm run start'"
+    "startCommand": "sh -lc 'set -eux; if [ -f /tmp/railpack_app_dir ]; then cd \"$(cat /tmp/railpack_app_dir)\"; elif [ -f package.json ]; then cd .; elif [ -f quickrec_web_server/package.json ]; then cd quickrec_web_server; elif [ -f web_server/package.json ]; then cd web_server; elif [ -f /tmp/quickrec_web_server/package.json ]; then cd /tmp/quickrec_web_server; else echo \"[railpack] package.json not found for start\"; exit 1; fi; echo \"[railpack] start dir=$(pwd)\"; npm run start'"
   }
 }
