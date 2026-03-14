@@ -9,6 +9,11 @@ import {
   validateDeviceSessionForUpload
 } from '../../_lib/recorder-multiuser-store'
 import { getSupabaseConfigError } from '../../_lib/supabase-client'
+import {
+  savePendingJob,
+  removePendingJob,
+  loadPendingJobs
+} from '../../_lib/pending-upload-jobs'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const TMP_DIR = join(process.cwd(), 'uploads_tmp')
@@ -40,6 +45,7 @@ const asyncUploadJobMap = new Map()
 const recentAsyncUploadJobs = []
 
 let asyncUploadRunning = false
+let pendingJobsRecovered = false
 
 function withCorsHeaders(extra) {
   return Object.assign({}, CORS_HEADERS, extra || {})
@@ -269,6 +275,9 @@ function queueAsyncUploadJob(jobInput) {
   asyncUploadQueue.push(job)
   asyncUploadJobMap.set(job.id, job)
   pushRecentAsyncJob(snapshotAsyncJob(job))
+  savePendingJob(job).catch(err => {
+    console.warn('[pending-jobs] save failed', String(err?.message || err))
+  })
   setTimeout(() => {
     void runAsyncUploadQueue()
   }, 0)
@@ -309,6 +318,7 @@ async function runOneAsyncUploadJob(job) {
       job.error = ''
       asyncUploadJobMap.set(job.id, job)
       pushRecentAsyncJob(snapshotAsyncJob(job))
+      removePendingJob(job.id).catch(() => {})
       return
     } catch (error) {
       const text = String(error && error.message ? error.message : error)
@@ -320,6 +330,7 @@ async function runOneAsyncUploadJob(job) {
         job.finishedAt = nowMs()
         asyncUploadJobMap.set(job.id, job)
         pushRecentAsyncJob(snapshotAsyncJob(job))
+        savePendingJob(job).catch(() => {})
         console.error('[watch-upload-async] failed', {
           jobId: job.id,
           uploadId: job.uploadId,
@@ -336,18 +347,34 @@ async function runOneAsyncUploadJob(job) {
 async function processAsyncUploadJob(job) {
   const localFileName = safeFileName(job.localFileName)
   const localPath = join(UPLOAD_DIR, localFileName)
-  await fs.access(localPath)
 
   let outputFileName = localFileName
+
   if (extname(localFileName).toLowerCase() === '.opus') {
-    const converted = await enqueueMp3Convert({
-      uploadDir: UPLOAD_DIR,
-      opusFileName: localFileName,
-      overwrite: true,
-      removeSource: true,
-      source: 'watch-upload-chunk-async'
-    })
-    outputFileName = String(converted?.filename || '') || localFileName
+    // 重试时 .opus 可能已被上一次转码删除，优先检查 .mp3 是否已存在
+    const mp3FileName = localFileName.replace(/\.opus$/i, '.mp3')
+    const mp3Path = join(UPLOAD_DIR, mp3FileName)
+    let mp3Exists = false
+    try {
+      await fs.access(mp3Path)
+      mp3Exists = true
+    } catch {}
+
+    if (mp3Exists) {
+      outputFileName = mp3FileName
+    } else {
+      await fs.access(localPath)
+      const converted = await enqueueMp3Convert({
+        uploadDir: UPLOAD_DIR,
+        opusFileName: localFileName,
+        overwrite: true,
+        removeSource: true,
+        source: 'watch-upload-chunk-async'
+      })
+      outputFileName = String(converted?.filename || '') || localFileName
+    }
+  } else {
+    await fs.access(localPath)
   }
 
   const outputPath = join(UPLOAD_DIR, outputFileName)
@@ -434,8 +461,68 @@ function makeAuthError(errorText) {
   )
 }
 
+async function recoverPendingJobs() {
+  if (pendingJobsRecovered) return
+  pendingJobsRecovered = true
+  try {
+    const pending = await loadPendingJobs()
+    if (!pending.length) return
+    console.log(`[pending-jobs] recovering ${pending.length} job(s)`)
+    for (const saved of pending) {
+      // 检查本地文件是否还在（可能是 .opus 或已转码的 .mp3）
+      const localFileName = String(saved.localFileName || '')
+      if (!localFileName) {
+        await removePendingJob(saved.id)
+        continue
+      }
+      const localPath = join(UPLOAD_DIR, localFileName)
+      const mp3FileName = localFileName.replace(/\.opus$/i, '.mp3')
+      const mp3Path = join(UPLOAD_DIR, mp3FileName)
+      let fileExists = false
+      try { await fs.access(localPath); fileExists = true } catch {}
+      if (!fileExists && mp3FileName !== localFileName) {
+        try { await fs.access(mp3Path); fileExists = true } catch {}
+      }
+      if (!fileExists) {
+        console.warn('[pending-jobs] skip, file missing', { id: saved.id, localFileName })
+        await removePendingJob(saved.id)
+        continue
+      }
+      console.log('[pending-jobs] re-queue', { id: saved.id, localFileName })
+      const job = {
+        id: saved.id,
+        status: 'queued',
+        attempt: 0,
+        maxRetries: Number(saved.maxRetries || ASYNC_UPLOAD_MAX_RETRIES),
+        queuedAt: Number(saved.queuedAt || Date.now()),
+        startedAt: 0,
+        finishedAt: 0,
+        error: '',
+        outputFileName: '',
+        objectKey: '',
+        url: '',
+        signedUrl: '',
+        uploadId: String(saved.uploadId || ''),
+        userId: String(saved.userId || ''),
+        deviceDbId: String(saved.deviceDbId || ''),
+        deviceIdentity: String(saved.deviceIdentity || ''),
+        localFileName
+      }
+      asyncUploadQueue.push(job)
+      asyncUploadJobMap.set(job.id, job)
+      pushRecentAsyncJob(snapshotAsyncJob(job))
+    }
+    if (asyncUploadQueue.length > 0) {
+      setTimeout(() => { void runAsyncUploadQueue() }, 500)
+    }
+  } catch (err) {
+    console.error('[pending-jobs] recover error', String(err?.message || err))
+  }
+}
+
 export async function POST(request) {
   let sessionCacheKey = ''
+  void recoverPendingJobs()
   const configError = getSupabaseConfigError()
   if (configError) {
     return Response.json(

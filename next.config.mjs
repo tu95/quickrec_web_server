@@ -1,4 +1,7 @@
-/** @type {import('next').NextConfig} */
+import createNextIntlPlugin from 'next-intl/plugin'
+
+const withNextIntl = createNextIntlPlugin()
+
 const configuredDistDir = String(process.env.NEXT_DIST_DIR || '').trim()
 const rawAllowedDevOrigins = String(
   process.env.NEXT_ALLOWED_DEV_ORIGINS ||
@@ -36,13 +39,12 @@ const allowedDevOrigins = parseAllowedDevOrigins(
   [rawAllowedDevOrigins, appPublicOrigin].filter(Boolean).join(',')
 )
 
+/** @type {import('next').NextConfig} */
 const nextConfig = {
-  // 将 dev / build-start 的产物目录隔离，避免 .next 被不同模式污染
   distDir: configuredDistDir || '.next',
   ...(allowedDevOrigins.length > 0
     ? { allowedDevOrigins }
     : {}),
-  // 允许来自 Zepp App WebView 的跨域请求
   async headers() {
     return [
       {
@@ -58,4 +60,4 @@ const nextConfig = {
   },
 }
 
-module.exports = nextConfig
+export default withNextIntl(nextConfig)

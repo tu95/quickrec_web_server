@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslations, useLocale } from 'next-intl'
 
 const MODE = {
   login: 'login',
@@ -76,32 +77,9 @@ function updateUrlMode(nextMode) {
   window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
 }
 
-function humanizeAuthError(raw) {
-  const text = String(raw || '').trim()
-  if (!text) return '请求失败，请稍后重试。'
-  const lowered = text.toLowerCase()
-  if (lowered.includes('email not confirmed')) {
-    return '邮箱还未验证，请先点“重发确认邮件”，验证后再登录。'
-  }
-  if (lowered.includes('invalid login credentials')) {
-    return '邮箱或密码不正确，请检查后再试。'
-  }
-  if (lowered.includes('rate limit') || lowered.includes('too many')) {
-    return '请求太频繁了，请稍后再试。'
-  }
-  if (lowered.includes('email rate limit exceeded')) {
-    return '邮件发送过于频繁，请稍后再试。若你已配置 Brevo，请检查 Supabase Custom SMTP 是否启用。'
-  }
-  if (lowered.includes('smtp')) {
-    return '邮件服务暂时不可用，请稍后重试。'
-  }
-  if (lowered.includes('captcha') || lowered.includes('turnstile')) {
-    return '人机验证失败，请刷新后重试。'
-  }
-  return text
-}
-
 export default function LoginPage() {
+  const t = useTranslations('login')
+  const locale = useLocale()
   const [mode, setMode] = useState(MODE.login)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -159,11 +137,24 @@ export default function LoginPage() {
   }, [mode])
 
   const title = useMemo(() => {
-    if (mode === MODE.register) return '创建账号'
-    if (mode === MODE.forgot) return '找回密码'
-    if (mode === MODE.reset) return '重置密码'
-    return '邮箱登录'
-  }, [mode])
+    if (mode === MODE.register) return t('titleRegister')
+    if (mode === MODE.forgot) return t('titleForgot')
+    if (mode === MODE.reset) return t('titleReset')
+    return t('titleLogin')
+  }, [mode, t])
+
+  function humanizeAuthError(raw) {
+    const text = String(raw || '').trim()
+    if (!text) return t('errDefault')
+    const lowered = text.toLowerCase()
+    if (lowered.includes('email not confirmed')) return t('errEmailNotConfirmed')
+    if (lowered.includes('invalid login credentials')) return t('errInvalidCredentials')
+    if (lowered.includes('rate limit') || lowered.includes('too many')) return t('errRateLimit')
+    if (lowered.includes('email rate limit exceeded')) return t('errEmailRateLimit')
+    if (lowered.includes('smtp')) return t('errSmtp')
+    if (lowered.includes('captcha') || lowered.includes('turnstile')) return t('errCaptcha')
+    return text
+  }
 
   async function bootstrap() {
     const url = new URL(window.location.href)
@@ -219,9 +210,9 @@ export default function LoginPage() {
       const safePassword = String(password || '')
       const safeTurnstileToken = String(turnstileToken || '').trim()
       if (mode === MODE.forgot) {
-        if (!safeEmail) throw new Error('请输入邮箱')
+        if (!safeEmail) throw new Error(t('errEnterEmail'))
         if (TURNSTILE_ENABLED && !safeTurnstileToken) {
-          throw new Error('请先完成人机验证')
+          throw new Error(t('errCompleteCaptcha'))
         }
         consumedTurnstile = TURNSTILE_ENABLED
         const res = await fetch('/api/user-auth/forgot-password', {
@@ -231,25 +222,25 @@ export default function LoginPage() {
         })
         const data = await res.json().catch(() => null)
         if (!res.ok || !data?.success) {
-          throw new Error(data?.error || `请求失败: HTTP ${res.status}`)
+          throw new Error(data?.error || t('errRequestHttp', { status: res.status }))
         }
-        setMessage(String(data?.message || '重置密码邮件已发送'))
+        setMessage(String(data?.message || t('msgResetSent')))
         return
       }
 
-      if (!safePassword) throw new Error('请输入密码')
-      if (safePassword.length < 6) throw new Error('密码至少 6 位')
+      if (!safePassword) throw new Error(t('errEnterPassword'))
+      if (safePassword.length < 6) throw new Error(t('errPasswordShort'))
 
       if (mode === MODE.register || mode === MODE.reset) {
         if (safePassword !== String(confirmPassword || '')) {
-          throw new Error('两次输入密码不一致')
+          throw new Error(t('errPasswordMismatch'))
         }
       }
 
       if (mode === MODE.register) {
-        if (!safeEmail) throw new Error('请输入邮箱')
+        if (!safeEmail) throw new Error(t('errEnterEmail'))
         if (TURNSTILE_ENABLED && !safeTurnstileToken) {
-          throw new Error('请先完成人机验证')
+          throw new Error(t('errCompleteCaptcha'))
         }
         consumedTurnstile = TURNSTILE_ENABLED
         const res = await fetch('/api/user-auth/register', {
@@ -263,11 +254,11 @@ export default function LoginPage() {
         })
         const data = await res.json().catch(() => null)
         if (!res.ok || !data?.success) {
-          throw new Error(data?.error || `请求失败: HTTP ${res.status}`)
+          throw new Error(data?.error || t('errRequestHttp', { status: res.status }))
         }
         if (data.requiresEmailConfirm) {
           switchMode(MODE.login)
-          setMessage('注册成功，请先完成邮箱验证后再登录。')
+          setMessage(t('msgRegisterSuccess'))
           return
         }
         const next = safeNext(new URL(window.location.href))
@@ -287,16 +278,16 @@ export default function LoginPage() {
         })
         const data = await res.json().catch(() => null)
         if (!res.ok || !data?.success) {
-          throw new Error(data?.error || `请求失败: HTTP ${res.status}`)
+          throw new Error(data?.error || t('errRequestHttp', { status: res.status }))
         }
         switchMode(MODE.login)
-        setMessage('密码已更新，请使用新密码登录。')
+        setMessage(t('msgPasswordUpdated'))
         return
       }
 
-      if (!safeEmail) throw new Error('请输入邮箱')
+      if (!safeEmail) throw new Error(t('errEnterEmail'))
       if (TURNSTILE_ENABLED && !safeTurnstileToken) {
-        throw new Error('请先完成人机验证')
+        throw new Error(t('errCompleteCaptcha'))
       }
       consumedTurnstile = TURNSTILE_ENABLED
       const res = await fetch('/api/user-auth/login', {
@@ -310,7 +301,7 @@ export default function LoginPage() {
       })
       const data = await res.json().catch(() => null)
       if (!res.ok || !data?.success) {
-        throw new Error(data?.error || `请求失败: HTTP ${res.status}`)
+        throw new Error(data?.error || t('errRequestHttp', { status: res.status }))
       }
       const next = safeNext(new URL(window.location.href))
       window.location.href = next
@@ -332,9 +323,9 @@ export default function LoginPage() {
     try {
       const safeEmail = String(email || '').trim()
       const safeTurnstileToken = String(turnstileToken || '').trim()
-      if (!safeEmail) throw new Error('请先输入邮箱')
+      if (!safeEmail) throw new Error(t('errEnterEmail'))
       if (TURNSTILE_ENABLED && !safeTurnstileToken) {
-        throw new Error('请先完成人机验证')
+        throw new Error(t('errCompleteCaptcha'))
       }
       consumedTurnstile = TURNSTILE_ENABLED
       const res = await fetch('/api/user-auth/resend-confirmation', {
@@ -344,9 +335,9 @@ export default function LoginPage() {
       })
       const data = await res.json().catch(() => null)
       if (!res.ok || !data?.success) {
-        throw new Error(data?.error || `请求失败: HTTP ${res.status}`)
+        throw new Error(data?.error || t('errRequestHttp', { status: res.status }))
       }
-      setMessage(String(data?.message || '确认邮件已发送'))
+      setMessage(String(data?.message || t('msgConfirmationSent')))
     } catch (err) {
       setError(humanizeAuthError(err?.message || err))
     } finally {
@@ -360,7 +351,7 @@ export default function LoginPage() {
   return (
     <main className="page-root auth-shell">
       <section className="panel panel-dark auth-card">
-        <p className="hero-kicker">QuickRec Account</p>
+        <p className="hero-kicker">{t('heroKicker')}</p>
         <h1 className="hero-title">{title}</h1>
 
         {mode !== MODE.reset && (
@@ -371,7 +362,7 @@ export default function LoginPage() {
               disabled={busy}
               className={`segmented-btn ${mode === MODE.login ? 'segmented-btn-active' : ''}`}
             >
-              登录
+              {t('tabLogin')}
             </button>
             <button
               type="button"
@@ -379,7 +370,7 @@ export default function LoginPage() {
               disabled={busy}
               className={`segmented-btn ${mode === MODE.register ? 'segmented-btn-active' : ''}`}
             >
-              注册
+              {t('tabRegister')}
             </button>
             <button
               type="button"
@@ -387,14 +378,14 @@ export default function LoginPage() {
               disabled={busy}
               className={`segmented-btn ${mode === MODE.forgot ? 'segmented-btn-active' : ''}`}
             >
-              找回密码
+              {t('tabForgot')}
             </button>
           </div>
         )}
 
         {mode !== MODE.reset && (
           <>
-            <label className="ui-label">邮箱</label>
+            <label className="ui-label">{t('email')}</label>
             <input
               type="email"
               value={email}
@@ -407,7 +398,7 @@ export default function LoginPage() {
 
         {mode !== MODE.forgot && (
           <>
-            <label className="ui-label">{mode === MODE.reset ? '新密码' : '密码'}</label>
+            <label className="ui-label">{mode === MODE.reset ? t('newPassword') : t('password')}</label>
             <div style={passwordFieldWrapStyle}>
               <input
                 type={showPassword ? 'text' : 'password'}
@@ -416,7 +407,7 @@ export default function LoginPage() {
                 onKeyDown={e => {
                   if (e.key === 'Enter') submit()
                 }}
-                placeholder="至少 6 位"
+                placeholder={t('passwordPlaceholder')}
                 className="ui-input"
                 style={passwordInputStyle}
               />
@@ -426,7 +417,7 @@ export default function LoginPage() {
                 className="ui-btn ui-btn-secondary"
                 style={passwordToggleBtnStyle}
               >
-                {showPassword ? '隐藏' : '显示'}
+                {showPassword ? t('hide') : t('show')}
               </button>
             </div>
           </>
@@ -434,7 +425,7 @@ export default function LoginPage() {
 
         {(mode === MODE.register || mode === MODE.reset) && (
           <>
-            <label className="ui-label">确认密码</label>
+            <label className="ui-label">{t('confirmPassword')}</label>
             <div style={passwordFieldWrapStyle}>
               <input
                 type={showConfirmPassword ? 'text' : 'password'}
@@ -443,7 +434,7 @@ export default function LoginPage() {
                 onKeyDown={e => {
                   if (e.key === 'Enter') submit()
                 }}
-                placeholder="再次输入密码"
+                placeholder={t('confirmPlaceholder')}
                 className="ui-input"
                 style={passwordInputStyle}
               />
@@ -453,7 +444,7 @@ export default function LoginPage() {
                 className="ui-btn ui-btn-secondary"
                 style={passwordToggleBtnStyle}
               >
-                {showConfirmPassword ? '隐藏' : '显示'}
+                {showConfirmPassword ? t('hide') : t('show')}
               </button>
             </div>
           </>
@@ -463,19 +454,19 @@ export default function LoginPage() {
           <div className="pair-step-card" style={{ marginTop: 12, overflowX: 'auto' }}>
             <div ref={turnstileContainerRef} />
             <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
-              {turnstileToken ? '安全验证已通过，可继续提交。' : '请先完成人机验证。'}
+              {turnstileToken ? t('turnstileVerified') : t('turnstilePending')}
             </div>
           </div>
         )}
 
         <button className="ui-btn ui-btn-primary auth-switch" onClick={submit} disabled={busy} style={{ marginTop: 12 }}>
-          {busy ? '处理中...' : mode === MODE.forgot ? '发送重置邮件' : mode === MODE.reset ? '更新密码' : mode === MODE.register ? '注册账号' : '登录'}
+          {busy ? t('processing') : mode === MODE.forgot ? t('sendReset') : mode === MODE.reset ? t('updatePassword') : mode === MODE.register ? t('createAccount') : t('loginAction')}
         </button>
 
         {mode === MODE.login && (
           <div className="action-row">
             <button type="button" onClick={resendConfirmation} disabled={busy} className="ui-btn ui-btn-secondary auth-switch">
-              重发确认邮件
+              {t('resendConfirmation')}
             </button>
           </div>
         )}
@@ -483,7 +474,7 @@ export default function LoginPage() {
         {mode === MODE.reset && (
           <div className="action-row">
             <button type="button" onClick={() => switchMode(MODE.login)} disabled={busy} className="ui-btn ui-btn-secondary auth-switch">
-              返回登录
+              {t('backToLogin')}
             </button>
           </div>
         )}

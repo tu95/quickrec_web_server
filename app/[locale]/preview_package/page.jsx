@@ -1,6 +1,7 @@
-import Link from 'next/link'
 import path from 'node:path'
 import { promises as fs } from 'node:fs'
+import { getTranslations } from 'next-intl/server'
+import { Link } from '../../../i18n/navigation'
 import PreviewPackageClient from './preview-package-client'
 import styles from './preview-package.module.css'
 
@@ -39,15 +40,16 @@ async function loadPreviewPackages() {
 
 export default async function PreviewPackagePage() {
   const payload = await loadPreviewPackages()
+  const t = await getTranslations('previewPackage')
   return (
     <main className={styles.pageRoot}>
       <section className={styles.heroCard}>
         <div className={styles.heroTop}>
-          <Link href="/" className={styles.backLink}>返回录音首页</Link>
-          <span className={styles.heroBadge}>本地脚本生成 · 服务端静态托管</span>
+          <Link href="/" className={styles.backLink}>{t('backToHome')}</Link>
+          <span className={styles.heroBadge}>{t('badge')}</span>
         </div>
-        <h1 className={styles.title}>二维码安装</h1>
-        <h2>选择你的设备型号</h2>
+        <h1 className={styles.title}>{t('title')}</h1>
+        <h2>{t('subtitle')}</h2>
       </section>
 
       <PreviewPackageClient initialPayload={payload} />

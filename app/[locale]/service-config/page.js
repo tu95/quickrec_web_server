@@ -1,16 +1,6 @@
 import { headers } from 'next/headers'
-import FileManagerClientNoSSR from './FileManagerClientNoSSR'
-
-function getRequestOrigin(headerStore) {
-  const forwardedProto = headerStore.get('x-forwarded-proto')
-  const forwardedHost = headerStore.get('x-forwarded-host')
-  if (forwardedHost) {
-    return `${forwardedProto || 'http'}://${forwardedHost}`
-  }
-
-  const host = headerStore.get('host') || 'localhost:3000'
-  return `${forwardedProto || 'http'}://${host}`
-}
+import { getTranslations } from 'next-intl/server'
+import ConfigProfilesManager from '../../config-profiles-manager'
 
 function decodeJwtPayload(token) {
   const text = String(token || '').trim()
@@ -48,21 +38,29 @@ function getUserIdFromAccessTokenCookie(headerStore) {
   return String(payload?.sub || payload?.user_id || '').trim()
 }
 
-export default async function Home() {
+export default async function ServiceConfigPage() {
   const headerStore = await headers()
-  const origin = getRequestOrigin(headerStore)
   const cacheUserId = getUserIdFromAccessTokenCookie(headerStore)
-
+  const t = await getTranslations('serviceConfig')
   return (
     <main className="page-root">
       <section className="panel panel-dark" style={{ marginBottom: 14 }}>
-        <h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.2 }}>录音文件管理</h1>
+        <h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.2 }}>{t('title')}</h1>
         <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>
-          在此查看、播放、下载、删除录音，并发起会议纪要。
+          {t('description')}
         </p>
       </section>
-      <section className="panel">
-        <FileManagerClientNoSSR origin={origin} initialFiles={[]} cacheUserId={cacheUserId} />
+
+      <section className="panel panel-dark">
+        <ConfigProfilesManager
+          mode="user"
+          title={t('userConfigTitle')}
+          subtitle={t('userConfigSubtitle')}
+          cacheUserId={cacheUserId}
+          hideAccess={true}
+          allowTesting={true}
+          hideHeader={true}
+        />
       </section>
     </main>
   )

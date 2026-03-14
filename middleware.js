@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server'
+import createIntlMiddleware from 'next-intl/middleware'
+import { routing } from './i18n/routing'
 
 const ACCESS_COOKIE = 'zr_user_access_token'
 const REFRESH_COOKIE = 'zr_user_refresh_token'
+
+const handleI18nRouting = createIntlMiddleware(routing)
 
 function readEnv(name) {
   return String(process.env[name] || '').trim()
@@ -153,9 +157,26 @@ async function refreshSessionWithSupabase(refreshToken) {
   }
 }
 
+/**
+ * 从 URL 中去除 locale 前缀，返回实际页面路径
+ */
+function stripLocalePrefix(pathname) {
+  for (const locale of routing.locales) {
+    if (pathname === `/${locale}`) return '/'
+    if (pathname.startsWith(`/${locale}/`)) return pathname.slice(locale.length + 1)
+  }
+  return pathname
+}
+
 function buildLoginRedirect(request, pathname) {
+  const pagePath = stripLocalePrefix(pathname)
+  const localeMatch = routing.locales.find(
+    l => pathname === `/${l}` || pathname.startsWith(`/${l}/`)
+  )
+  const locale = localeMatch || routing.defaultLocale
+
   const loginUrl = request.nextUrl.clone()
-  loginUrl.pathname = '/login'
+  loginUrl.pathname = locale === routing.defaultLocale ? '/login' : `/${locale}/login`
   const nextPath = `${pathname}${request.nextUrl.search || ''}`
   loginUrl.searchParams.set('next', nextPath)
   return loginUrl
@@ -166,31 +187,9 @@ export async function middleware(request) {
   const hasNextActionHeader = !!request.headers.get('next-action')
   const pathname = request.nextUrl.pathname || '/'
   const isApiRoute = pathname.startsWith('/api/')
-  const isStaticAsset = pathname.startsWith('/_next/') || pathname === '/favicon.ico'
-  const userSession = String(request.cookies.get(ACCESS_COOKIE)?.value || '').trim()
-  const refreshToken = String(request.cookies.get(REFRESH_COOKIE)?.value || '').trim()
-  const authHeader = String(request.headers.get('authorization') || '').trim()
-  const hasBearerAuth = /^bearer\s+/i.test(authHeader)
-  const bearerToken = hasBearerAuth ? authHeader.replace(/^bearer\s+/i, '').trim() : ''
-  const isLoginPage = pathname === '/login' || pathname === '/user/login'
-  const hasUserSession = !!userSession
-  const hasRefreshToken = !!refreshToken
-  const protectedApiPrefixes = [
-    '/api/admin/',
-    '/api/user/',
-    '/api/user-auth/me',
-    '/api/user-auth/profile',
-    '/api/user-auth/change-password',
-    '/api/files',
-    '/api/meeting-notes',
-    '/api/convert-mp3',
-    '/api/upload',
-    '/api/upload-test',
-    '/api/upload-chunk'
-  ]
-  const isProtectedApi = protectedApiPrefixes.some(prefix => pathname.startsWith(prefix))
+  const hasFileExt = /\.(?:png|jpe?g|gif|svg|ico|webp|css|js|woff2?|ttf|eot|mp3|mp4|opus|wav|pdf|json|xml|txt|map)$/i.test(pathname)
+  const isStaticAsset = pathname.startsWith('/_next/') || pathname === '/favicon.ico' || hasFileExt
 
-  // 该项目未使用 Server Actions。拦截来自旧构建的陈旧 action 请求，避免页面直接抛错。
   if (method === 'POST' && hasNextActionHeader && !isApiRoute && !isStaticAsset) {
     const url = request.nextUrl.clone()
     return NextResponse.redirect(url, 303)
@@ -200,12 +199,35 @@ export async function middleware(request) {
     return NextResponse.next()
   }
 
-  if (isApiRoute && isProtectedApi) {
+  // API 路由：不走 i18n，只做 auth
+  if (isApiRoute) {
+    const userSession = String(request.cookies.get(ACCESS_COOKIE)?.value || '').trim()
+    const refreshToken = String(request.cookies.get(REFRESH_COOKIE)?.value || '').trim()
+    const authHeader = String(request.headers.get('authorization') || '').trim()
+    const hasBearerAuth = /^bearer\s+/i.test(authHeader)
+    const bearerToken = hasBearerAuth ? authHeader.replace(/^bearer\s+/i, '').trim() : ''
+    const hasUserSession = !!userSession
+    const hasRefreshToken = !!refreshToken
+    const protectedApiPrefixes = [
+      '/api/admin/',
+      '/api/user/',
+      '/api/user-auth/me',
+      '/api/user-auth/profile',
+      '/api/user-auth/change-password',
+      '/api/files',
+      '/api/meeting-notes',
+      '/api/convert-mp3',
+      '/api/upload',
+      '/api/upload-test',
+      '/api/upload-chunk'
+    ]
+    const isProtectedApi = protectedApiPrefixes.some(prefix => pathname.startsWith(prefix))
+
+    if (!isProtectedApi) return NextResponse.next()
+
     if (hasBearerAuth) {
       const verified = await validateAccessTokenWithSupabase(bearerToken)
-      if (verified.ok) {
-        return NextResponse.next()
-      }
+      if (verified.ok) return NextResponse.next()
       if (verified.reason === 'unreachable') {
         return NextResponse.json(
           { success: false, error: '认证服务暂时不可用，请稍后重试' },
@@ -228,9 +250,7 @@ export async function middleware(request) {
 
     if (hasUserSession) {
       const verified = await validateAccessTokenWithSupabase(userSession)
-      if (verified.ok) {
-        return NextResponse.next()
-      }
+      if (verified.ok) return NextResponse.next()
       if (verified.reason === 'unreachable') {
         return NextResponse.json(
           { success: false, error: '认证服务暂时不可用，请稍后重试' },
@@ -244,11 +264,7 @@ export async function middleware(request) {
       if (refreshed.ok) {
         const headers = new Headers(request.headers)
         headers.set('authorization', `Bearer ${refreshed.accessToken}`)
-        const response = NextResponse.next({
-          request: {
-            headers
-          }
-        })
+        const response = NextResponse.next({ request: { headers } })
         setUserSessionCookies(response, refreshed.accessToken, refreshed.refreshToken, request)
         return response
       }
@@ -267,17 +283,27 @@ export async function middleware(request) {
     return clearUserSessionCookies(response, request)
   }
 
-  if (!isApiRoute && !isLoginPage && !hasUserSession && !hasRefreshToken) {
+  // 页面路由：先走 i18n 再做 auth
+  const pagePath = stripLocalePrefix(pathname)
+  const isLoginPage = pagePath === '/login' || pagePath === '/user/login'
+  const userSession = String(request.cookies.get(ACCESS_COOKIE)?.value || '').trim()
+  const refreshToken = String(request.cookies.get(REFRESH_COOKIE)?.value || '').trim()
+  const hasUserSession = !!userSession
+  const hasRefreshToken = !!refreshToken
+
+  // 未登录且不在登录页 → 跳转登录
+  if (!isLoginPage && !hasUserSession && !hasRefreshToken) {
     const response = NextResponse.redirect(buildLoginRedirect(request, pathname))
     return clearUserSessionCookies(response, request)
   }
 
-  if (!isApiRoute && !isLoginPage && !hasUserSession && hasRefreshToken) {
+  // 有 refresh token 无 session → 尝试刷新
+  if (!isLoginPage && !hasUserSession && hasRefreshToken) {
     const refreshed = await refreshSessionWithSupabase(refreshToken)
     if (refreshed.ok) {
-      const response = NextResponse.next()
-      setUserSessionCookies(response, refreshed.accessToken, refreshed.refreshToken, request)
-      return response
+      const intlResponse = handleI18nRouting(request)
+      setUserSessionCookies(intlResponse, refreshed.accessToken, refreshed.refreshToken, request)
+      return intlResponse
     }
     if (refreshed.reason === 'invalid') {
       const response = NextResponse.redirect(buildLoginRedirect(request, pathname))
@@ -285,9 +311,9 @@ export async function middleware(request) {
     }
   }
 
-  return NextResponse.next()
+  return handleI18nRouting(request)
 }
 
 export const config = {
-  matcher: ['/:path*'],
+  matcher: ['/((?!_next|favicon.ico).*)'],
 }

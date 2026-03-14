@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useCachedApi } from '../_lib/use-cached-api'
-import { clearCurrentUserApiCaches } from '../_lib/client-cache'
+import { useTranslations, useLocale } from 'next-intl'
+import { useCachedApi } from '../../_lib/use-cached-api'
+import { clearCurrentUserApiCaches } from '../../_lib/client-cache'
 
 const PAIR_CODE_LENGTH = 6
 
@@ -13,22 +14,17 @@ function maskToken(token) {
   return `${text.slice(0, 6)}...${text.slice(-4)}`
 }
 
-function formatDateTime(value) {
+function formatDateTime(value, locale) {
   const text = String(value || '').trim()
   if (!text) return '-'
   const date = new Date(text)
   if (Number.isNaN(date.getTime())) return text
-  return date.toLocaleString('zh-CN', { hour12: false })
-}
-
-function statusText(status) {
-  const raw = String(status || '').trim().toLowerCase()
-  if (raw === 'active') return 'active（可用）'
-  if (raw === 'disabled') return 'disabled（已禁用）'
-  return raw || '-'
+  return date.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })
 }
 
 export default function PairPage() {
+  const t = useTranslations('pair')
+  const locale = useLocale()
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [deletingDeviceId, setDeletingDeviceId] = useState('')
@@ -105,6 +101,13 @@ export default function PairPage() {
   const sortedDevices = useMemo(() => {
     return [...devices].sort((a, b) => String(b.boundAt || '').localeCompare(String(a.boundAt || '')))
   }, [devices])
+
+  function statusText(status) {
+    const raw = String(status || '').trim().toLowerCase()
+    if (raw === 'active') return t('statusActive')
+    if (raw === 'disabled') return t('statusDisabled')
+    return raw || '-'
+  }
 
   async function loadDevices() {
     await devicesApi.refresh()
@@ -199,7 +202,7 @@ export default function PairPage() {
       if (pairCodeReady && !busy && !loading) {
         void bindPairCode()
       } else {
-        setError('请输入完整 6 位配对码')
+        setError(t('errIncompleteCode'))
       }
       return
     }
@@ -223,7 +226,7 @@ export default function PairPage() {
     try {
       const code = String(pairCode || '').trim()
       if (!/^\d{6}$/.test(code)) {
-        throw new Error('请输入完整 6 位配对码')
+        throw new Error(t('errIncompleteCode'))
       }
       const res = await fetch('/api/user/devices/bind', {
         method: 'POST',
@@ -232,9 +235,9 @@ export default function PairPage() {
       })
       const data = await res.json().catch(() => null)
       if (!res.ok || !data?.success) {
-        throw new Error(data?.error || `绑定失败: HTTP ${res.status}`)
+        throw new Error(data?.error || t('errBindFailed', { status: res.status }))
       }
-      setMessage(`绑定成功，设备 ${data?.device?.deviceId || data?.device?.id || ''} 已关联到当前账号。`)
+      setMessage(t('msgBindSuccess', { deviceId: data?.device?.deviceId || data?.device?.id || '' }))
       setLatestSessionToken(String(data?.sessionToken || ''))
       setLatestSessionExpiresAt(String(data?.sessionExpiresAt || ''))
       setPairDigits(Array(PAIR_CODE_LENGTH).fill(''))
@@ -266,11 +269,11 @@ export default function PairPage() {
   async function unbindDevice(device) {
     const id = String(device?.id || '').trim()
     if (!id) {
-      setError('设备参数异常，缺少 ID')
+      setError(t('errDeviceMissingId'))
       return
     }
     const label = String(device?.deviceId || id)
-    const confirmed = window.confirm(`确认删除设备 ${label} 的绑定关系吗？`)
+    const confirmed = window.confirm(t('confirmUnbind', { label }))
     if (!confirmed) return
     setDeletingDeviceId(id)
     setError('')
@@ -283,10 +286,10 @@ export default function PairPage() {
       })
       const data = await res.json().catch(() => null)
       if (!res.ok || !data?.success) {
-        throw new Error(data?.error || `删除失败: HTTP ${res.status}`)
+        throw new Error(data?.error || t('errUnbindFailed', { status: res.status }))
       }
       const finalDeviceId = String(data?.device?.deviceId || label)
-      setMessage(data?.alreadyUnbound ? `设备 ${finalDeviceId} 已是未绑定状态。` : `设备 ${finalDeviceId} 已删除绑定。`)
+      setMessage(data?.alreadyUnbound ? t('msgAlreadyUnbound', { deviceId: finalDeviceId }) : t('msgUnbound', { deviceId: finalDeviceId }))
       await loadDevices()
     } catch (err) {
       setError(String(err?.message || err))
@@ -298,34 +301,14 @@ export default function PairPage() {
   return (
     <main className="page-root pair-shell">
       <section className="panel panel-dark" style={{ marginBottom: 14 }}>
-        <h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.2 }}>手表配对绑定</h1>
+        <h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.2 }}>{t('title')}</h1>
         <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>
-          手表端获取配对码后，在这里完成设备绑定。绑定成功后，上传将归属到你的账号。
+          {t('description')}
         </p>
-        {/* {user?.email && (
-          <div className="server-pill" style={{ marginTop: 12 }}>
-            <span>当前账号</span>
-            <code>{user.email}</code>
-          </div>
-        )} */}
       </section>
 
-      {/* <section className="panel panel-dark" style={{ marginBottom: 14 }}>
-        <div className="pair-steps">
-          <div className="pair-step-card">
-            <strong>步骤 1：</strong>在手表设置页获取配对码。
-          </div>
-          <div className="pair-step-card">
-            <strong>步骤 2：</strong>把配对码填入下方输入框并提交绑定。
-          </div>
-          <div className="pair-step-card">
-            <strong>步骤 3：</strong>设备会话下发后，手表上传即自动归档到当前账号。
-          </div>
-        </div>
-      </section> */}
-
       <section className="panel panel-dark" style={{ marginBottom: 14 }}>
-        <h3 style={{ marginTop: 0, marginBottom: 10 }}>输入配对码</h3>
+        <h3 style={{ marginTop: 0, marginBottom: 10 }}>{t('enterCode')}</h3>
         <div className="pair-code-wrap">
           <div className="pair-code-grid" onPaste={handlePairPaste}>
             {pairDigits.map((digit, index) => (
@@ -342,19 +325,19 @@ export default function PairPage() {
                 onChange={event => handlePairDigitChange(index, event.target.value)}
                 onKeyDown={event => handlePairDigitKeyDown(index, event)}
                 className="pair-code-cell"
-                aria-label={`配对码第 ${index + 1} 位`}
+                aria-label={t('codeAriaLabel', { index: index + 1 })}
               />
             ))}
           </div>
-          <div className="pair-code-hint">例如 472918，输入满 6 位后按回车可直接绑定</div>
+          <div className="pair-code-hint">{t('codeHint')}</div>
         </div>
 
         <div className="action-row pair-action-row">
           <button onClick={bindPairCode} disabled={busy || loading || !pairCodeReady} className="ui-btn ui-btn-primary">
-            {busy ? '绑定中...' : '绑定设备'}
+            {busy ? t('binding') : t('bindDevice')}
           </button>
           <button onClick={logout} disabled={busy} className="ui-btn ui-btn-danger">
-            退出登录
+            {t('logout')}
           </button>
         </div>
 
@@ -366,36 +349,36 @@ export default function PairPage() {
 
         {latestSessionToken && (
           <div className="ui-notice ui-notice-info">
-            <div>设备会话：{maskToken(latestSessionToken)}</div>
-            <div>过期时间：{formatDateTime(latestSessionExpiresAt)}</div>
+            <div>{t('deviceSession', { token: maskToken(latestSessionToken) })}</div>
+            <div>{t('expiresAt', { time: formatDateTime(latestSessionExpiresAt, locale) })}</div>
           </div>
         )}
       </section>
 
       <section className="panel panel-dark">
-        <h3 style={{ marginTop: 0, marginBottom: 10 }}>已绑定设备</h3>
+        <h3 style={{ marginTop: 0, marginBottom: 10 }}>{t('boundDevices')}</h3>
         {devicesApi.cacheMessage && (
           <div className="ui-notice ui-notice-info">{devicesApi.cacheMessage}</div>
         )}
         {loading || (cacheUserId && devicesApi.isLoading && sortedDevices.length === 0) ? (
-          <p className="muted">加载中...</p>
+          <p className="muted">{t('loadingDevices')}</p>
         ) : sortedDevices.length === 0 ? (
-          <p className="muted">暂无绑定设备</p>
+          <p className="muted">{t('noDevices')}</p>
         ) : (
           <div className="device-grid">
             {sortedDevices.map(item => (
               <div key={`${item.id}_${item.boundAt}`} className="device-card">
-                <div><strong>设备标识：</strong>{item.deviceId || '-'}</div>
-                <div><strong>设备型号：</strong>{item.deviceModel || '未知型号'}</div>
-                <div><strong>状态：</strong>{statusText(item.status)}</div>
-                <div><strong>绑定时间：</strong>{formatDateTime(item.boundAt)}</div>
+                <div><strong>{t('deviceId')}</strong>{item.deviceId || '-'}</div>
+                <div><strong>{t('deviceModel')}</strong>{item.deviceModel || t('unknownModel')}</div>
+                <div><strong>{t('deviceStatus')}</strong>{statusText(item.status)}</div>
+                <div><strong>{t('boundAt')}</strong>{formatDateTime(item.boundAt, locale)}</div>
                 <div className="action-row" style={{ marginTop: 8 }}>
                   <button
                     className="ui-btn ui-btn-danger"
                     onClick={() => unbindDevice(item)}
                     disabled={busy || loading || deletingDeviceId === String(item.id || '')}
                   >
-                    {deletingDeviceId === String(item.id || '') ? '删除中...' : '删除设备'}
+                    {deletingDeviceId === String(item.id || '') ? t('deleting') : t('deleteDevice')}
                   </button>
                 </div>
               </div>

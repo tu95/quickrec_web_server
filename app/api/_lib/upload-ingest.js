@@ -5,6 +5,7 @@ import { probeAudioDurationSec } from './audio-duration'
 import { readConfigForUser } from './config-store'
 import { uploadBufferToOss } from './oss-storage'
 import { ensureDevice, insertRecordingMetadata } from './recorder-multiuser-store'
+import { savePendingJob, removePendingJob } from './pending-upload-jobs'
 
 function safeFileName(name) {
   const value = basename(String(name || '').replace(/[\/\\]/g, '_')).trim()
@@ -52,6 +53,8 @@ export async function ingestUploadedLocalFile(input) {
   let autoConverted = false
   let convertedFileName = ''
 
+  const jobId = `ingest_${Date.now()}_${Math.floor(Math.random() * 1000000)}`
+
   try {
     if (extname(outputFileName).toLowerCase() === '.opus') {
       const converted = await enqueueMp3Convert({
@@ -68,6 +71,21 @@ export async function ingestUploadedLocalFile(input) {
       outputPath = join(dirname(localFilePath), outputFileName)
       cleanupList.push(outputPath)
     }
+
+    // 在 OSS 上传等高风险操作前持久化，保证崩溃/重启后可恢复
+    await savePendingJob({
+      id: jobId,
+      uploadId: String(source.source || 'upload-ingest') + '_' + outputFileName,
+      userId,
+      deviceDbId: '',
+      deviceIdentity: 'web_upload',
+      localFileName: outputFileName,
+      queuedAt: Date.now(),
+      attempt: 1,
+      maxRetries: 3,
+      error: '',
+      status: 'running'
+    }).catch(() => {})
 
     const fileBuffer = await fs.readFile(outputPath)
     if (!fileBuffer.length) throw new Error('上传文件为空')
@@ -101,6 +119,8 @@ export async function ingestUploadedLocalFile(input) {
       status: 'uploaded'
     })
 
+    // 成功：移除 pending 记录，清理本地文件
+    await removePendingJob(jobId).catch(() => {})
     await cleanupPaths(cleanupList)
 
     return {
@@ -115,7 +135,25 @@ export async function ingestUploadedLocalFile(input) {
       signedUrl: String(uploaded.signedUrl || '')
     }
   } catch (error) {
-    await cleanupPaths(cleanupList)
+    // 失败：保留本地文件 + pending 记录，供后续恢复
+    savePendingJob({
+      id: jobId,
+      uploadId: String(source.source || 'upload-ingest') + '_' + outputFileName,
+      userId,
+      deviceDbId: '',
+      deviceIdentity: 'web_upload',
+      localFileName: outputFileName,
+      queuedAt: Date.now(),
+      attempt: 1,
+      maxRetries: 3,
+      error: String(error?.message || error),
+      status: 'failed'
+    }).catch(() => {})
+    console.error('[upload-ingest] failed, file kept for recovery', {
+      jobId,
+      outputFileName,
+      error: String(error?.message || error)
+    })
     throw error
   }
 }

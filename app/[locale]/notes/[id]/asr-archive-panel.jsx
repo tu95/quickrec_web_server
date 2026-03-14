@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useTranslations, useLocale } from 'next-intl'
 import styles from './note-viewer.module.css'
 
 function pickErrorText(data, status) {
@@ -12,6 +13,8 @@ function pickErrorText(data, status) {
 }
 
 export default function AsrArchivePanel({ noteId, asrArchiveUrl, hasAsrArchive }) {
+  const t = useTranslations('notes')
+  const locale = useLocale()
   const [busy, setBusy] = useState(false)
   const [copyBusy, setCopyBusy] = useState(false)
   const [open, setOpen] = useState(false)
@@ -21,7 +24,7 @@ export default function AsrArchivePanel({ noteId, asrArchiveUrl, hasAsrArchive }
 
   async function loadArchive() {
     if (!hasAsrArchive) {
-      throw new Error('当前纪要没有 ASR 原文存档')
+      throw new Error(t('asrNoArchive'))
     }
     const url = String(asrArchiveUrl || '').trim() || `/api/meeting-notes/${encodeURIComponent(noteId)}/asr`
     const res = await fetch(url, { cache: 'no-store' })
@@ -61,10 +64,10 @@ export default function AsrArchivePanel({ noteId, asrArchiveUrl, hasAsrArchive }
       const next = archive || await loadArchive()
       const transcript = String(next?.transcript || '')
       if (!transcript.trim()) {
-        throw new Error('ASR 原文为空，无法复制')
+        throw new Error(t('asrEmpty'))
       }
       if (!navigator?.clipboard?.writeText) {
-        throw new Error('当前浏览器不支持剪贴板 API')
+        throw new Error(t('asrClipboardUnsupported'))
       }
       await navigator.clipboard.writeText(transcript)
       setCopyDone(true)
@@ -79,15 +82,15 @@ export default function AsrArchivePanel({ noteId, asrArchiveUrl, hasAsrArchive }
   const transcript = String(archive?.transcript || '')
   const transcriptChars = Number(archive?.transcriptChars || transcript.length || 0)
   const transcriptCharsText = Number.isFinite(transcriptChars) && transcriptChars > 0
-    ? `${transcriptChars.toLocaleString('zh-CN')} 字`
-    : '未知'
+    ? t('charCount', { count: transcriptChars.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US') })
+    : t('unknown')
 
   return (
     <section className={styles.asrCard}>
       <div className={styles.asrHeader}>
         <div className={styles.asrTitleWrap}>
-          <h2 className={styles.asrTitle}>ASR 原文存档</h2>
-          <p className={styles.asrHint}>保留模型总结前的原始转写结果，可直接复制。</p>
+          <h2 className={styles.asrTitle}>{t('asrTitle')}</h2>
+          <p className={styles.asrHint}>{t('asrHint')}</p>
         </div>
         <div className={styles.asrActions}>
           <button
@@ -96,7 +99,7 @@ export default function AsrArchivePanel({ noteId, asrArchiveUrl, hasAsrArchive }
             onClick={toggleOpen}
             disabled={busy || copyBusy || !hasAsrArchive}
           >
-            {busy ? '加载中...' : (open ? '收起 ASR 原文' : '查看 ASR 原文')}
+            {busy ? t('asrLoading') : (open ? t('asrCollapse') : t('asrExpand'))}
           </button>
           <button
             type="button"
@@ -104,14 +107,14 @@ export default function AsrArchivePanel({ noteId, asrArchiveUrl, hasAsrArchive }
             onClick={copyArchive}
             disabled={busy || copyBusy || !hasAsrArchive}
           >
-            {copyBusy ? '复制中...' : (copyDone ? '已复制' : '复制 ASR 原文')}
+            {copyBusy ? t('asrCopying') : (copyDone ? t('asrCopied') : t('asrCopy'))}
           </button>
         </div>
       </div>
       {open && (
         <div className={styles.asrBody}>
-          <div className={styles.asrMeta}>转写长度: {transcriptCharsText}</div>
-          <pre className={styles.asrText}>{transcript || '无可用原文'}</pre>
+          <div className={styles.asrMeta}>{t('asrLengthLabel')} {transcriptCharsText}</div>
+          <pre className={styles.asrText}>{transcript || t('asrNoText')}</pre>
         </div>
       )}
       {error && (

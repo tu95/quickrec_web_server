@@ -1,17 +1,25 @@
 'use client'
 
-import Link from 'next/link'
-import { usePathname } from 'next/navigation'
 import { useState } from 'react'
+import { useTranslations, useLocale } from 'next-intl'
+import { Link, usePathname, useRouter } from '../i18n/navigation'
 import { clearCurrentUserApiCaches } from './_lib/client-cache'
 
 export default function HomeAuthActions() {
   const [busy, setBusy] = useState(false)
   const pathname = usePathname()
+  const locale = useLocale()
+  const router = useRouter()
+  const t = useTranslations('common.nav')
 
   function linkClass(target, extra = '') {
     const active = pathname === target
     return ['top-nav-link', active ? 'top-nav-link-active' : '', extra].filter(Boolean).join(' ')
+  }
+
+  function switchLocale() {
+    const next = locale === 'zh' ? 'en' : 'zh'
+    router.replace(pathname, { locale: next })
   }
 
   async function logout() {
@@ -24,7 +32,7 @@ export default function HomeAuthActions() {
       }
       clearCurrentUserApiCaches()
       if (typeof window !== 'undefined') {
-        window.location.href = '/login'
+        window.location.href = locale === 'zh' ? '/login' : `/${locale}/login`
       }
     } catch (error) {
       clearCurrentUserApiCaches()
@@ -37,35 +45,43 @@ export default function HomeAuthActions() {
   }
 
   return (
-    <nav className="top-nav-shell" aria-label="快速导航">
+    <nav className="top-nav-shell" aria-label={locale === 'zh' ? '快速导航' : 'Quick Navigation'}>
       <div className="top-nav-main">
         <Link href="/" className={linkClass('/')} aria-current={pathname === '/' ? 'page' : undefined}>
-          录音文件
+          {t('recordings')}
         </Link>
         <Link
           href="/service-config"
           className={linkClass('/service-config')}
           aria-current={pathname === '/service-config' ? 'page' : undefined}
         >
-          AI服务配置
+          {t('aiConfig')}
         </Link>
         <Link href="/pair" className={linkClass('/pair')} aria-current={pathname === '/pair' ? 'page' : undefined}>
-          绑定设备
+          {t('bindDevice')}
         </Link>
         <Link href="/tutorial" className={linkClass('/tutorial')} aria-current={pathname === '/tutorial' ? 'page' : undefined}>
-          使用教程
+          {t('tutorial')}
         </Link>
       </div>
 
       <div className="top-nav-tools">
+        <button
+          type="button"
+          onClick={switchLocale}
+          className="top-nav-link top-nav-link-tool"
+          style={{ cursor: 'pointer', fontWeight: 600, letterSpacing: '0.02em' }}
+        >
+          {locale === 'zh' ? 'EN' : '中文'}
+        </button>
         <Link href="/preview_package" className={linkClass('/preview_package', 'top-nav-link-tool')}>
-          获取安装包
+          {t('getPackage')}
         </Link>
         <Link href="/account" className={linkClass('/account', 'top-nav-link-tool')}>
-          账户
+          {t('account')}
         </Link>
         <button type="button" onClick={logout} disabled={busy} className="top-nav-link top-nav-link-danger">
-          {busy ? '退出中...' : '退出登录'}
+          {busy ? t('loggingOut') : t('logout')}
         </button>
       </div>
     </nav>

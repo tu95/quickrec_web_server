@@ -1,9 +1,12 @@
 import { notFound } from 'next/navigation'
-import { isValidAdminSettingsToken } from '../../_lib/admin-settings-route'
+import { getTranslations } from 'next-intl/server'
+import { isValidAdminSettingsToken } from '../../../_lib/admin-settings-route'
 import SettingsPageContent from '../settings-page-content'
 
-export const metadata = {
-  title: 'AI 设置中心'
+export async function generateMetadata({ params }) {
+  const { locale } = await params
+  const t = await getTranslations({ locale, namespace: 'settings' })
+  return { title: t('metaTitle') }
 }
 
 export default async function SettingsPrivatePage({ params }) {
@@ -14,4 +17,3 @@ export default async function SettingsPrivatePage({ params }) {
   }
   return <SettingsPageContent />
 }
-

@@ -1,9 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useCachedApi } from '../_lib/use-cached-api'
+import { useTranslations } from 'next-intl'
+import { useCachedApi } from '../../_lib/use-cached-api'
 
 export default function AccountPage() {
+  const t = useTranslations('account')
   const [loading, setLoading] = useState(true)
   const [profileBusy, setProfileBusy] = useState(false)
   const [passwordBusy, setPasswordBusy] = useState(false)
@@ -98,7 +100,7 @@ export default function AccountPage() {
     setError('')
     try {
       const name = String(displayName || '').trim()
-      if (!name) throw new Error('用户名不能为空')
+      if (!name) throw new Error(t('profileEmptyError'))
       const res = await fetch('/api/user-auth/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -109,7 +111,7 @@ export default function AccountPage() {
         throw new Error(data?.error || `HTTP ${res.status}`)
       }
       setDisplayName(String(data?.user?.displayName || name))
-      setMessage('用户名已更新')
+      setMessage(t('profileUpdated'))
       void meApi.refresh()
     } catch (err) {
       setError(String(err?.message || err))
@@ -127,10 +129,10 @@ export default function AccountPage() {
       const newPwd = String(newPassword || '')
       const confirmPwd = String(confirmPassword || '')
       if (!oldPwd || !newPwd || !confirmPwd) {
-        throw new Error('请完整填写旧密码和两次新密码')
+        throw new Error(t('passwordFillAll'))
       }
       if (newPwd !== confirmPwd) {
-        throw new Error('两次新密码不一致')
+        throw new Error(t('passwordMismatch'))
       }
       const res = await fetch('/api/user-auth/change-password', {
         method: 'POST',
@@ -148,7 +150,7 @@ export default function AccountPage() {
       setOldPassword('')
       setNewPassword('')
       setConfirmPassword('')
-      setMessage('密码已更新')
+      setMessage(t('passwordUpdated'))
     } catch (err) {
       setError(String(err?.message || err))
     } finally {
@@ -159,21 +161,21 @@ export default function AccountPage() {
   return (
     <main className="page-root pair-shell">
       <section className="panel panel-dark" style={{ marginBottom: 14 }}>
-        <h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.2 }}>账户设置</h1>
-        <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>可在此修改用户名与登录密码。</p>
+        <h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.2 }}>{t('title')}</h1>
+        <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>{t('description')}</p>
         {email && (
           <div className="server-pill" style={{ marginTop: 12 }}>
-            <span>当前账号</span>
+            <span>{t('currentAccount')}</span>
             <code>{email}</code>
           </div>
         )}
         <div style={quotaCountRowStyle}>
-          <span style={quotaCountTagStyle}>👑 会议纪要次数：</span>
+          <span style={quotaCountTagStyle}>{t('meetingNotesCount')}</span>
           <strong style={quotaCountTextStyle}>
             {quota.loading
-              ? '加载中...'
+              ? t('loading')
               : quota.error
-                ? '加载失败'
+                ? t('loadFailed')
                 : `${Math.max(0, quota.remaining)}`}
           </strong>
         </div>
@@ -181,18 +183,18 @@ export default function AccountPage() {
 
       {!quota.loading && !quota.error && (
         <section className="panel panel-dark" style={{ marginBottom: 14 }}>
-          <h3 style={{ marginTop: 0, marginBottom: 10 }}>会议纪要额度</h3>
+          <h3 style={{ marginTop: 0, marginBottom: 10 }}>{t('quotaTitle')}</h3>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            <div className="server-pill"><span>总额度</span><code>{Math.max(0, quota.limit)}</code></div>
-            <div className="server-pill"><span>已使用</span><code>{Math.max(0, quota.usedCount)}</code></div>
-            <div className="server-pill"><span>剩余</span><code>{Math.max(0, quota.remaining)}</code></div>
+            <div className="server-pill"><span>{t('quotaTotal')}</span><code>{Math.max(0, quota.limit)}</code></div>
+            <div className="server-pill"><span>{t('quotaUsed')}</span><code>{Math.max(0, quota.usedCount)}</code></div>
+            <div className="server-pill"><span>{t('quotaRemaining')}</span><code>{Math.max(0, quota.remaining)}</code></div>
           </div>
         </section>
       )}
 
       {!quota.loading && quota.error && (
         <div className="ui-notice ui-notice-error" style={{ marginBottom: 14 }}>
-          会议纪要余额加载失败: {quota.error}
+          {t('quotaLoadError', { error: quota.error })}
         </div>
       )}
       {meApi.cacheMessage && (
@@ -207,15 +209,15 @@ export default function AccountPage() {
       )}
 
       <section className="panel panel-dark" style={{ marginBottom: 14 }}>
-        <h3 style={{ marginTop: 0, marginBottom: 10 }}>修改用户名</h3>
-        <label className="ui-label" htmlFor="account-display-name">用户名</label>
+        <h3 style={{ marginTop: 0, marginBottom: 10 }}>{t('profileTitle')}</h3>
+        <label className="ui-label" htmlFor="account-display-name">{t('profileLabel')}</label>
         <input
           id="account-display-name"
           className="ui-input"
           value={displayName}
           onChange={e => setDisplayName(e.target.value)}
           maxLength={32}
-          placeholder="请输入用户名"
+          placeholder={t('profilePlaceholder')}
           disabled={loading || profileBusy}
         />
         <div className="action-row">
@@ -225,41 +227,41 @@ export default function AccountPage() {
             onClick={saveProfile}
             disabled={loading || profileBusy}
           >
-            {profileBusy ? '保存中...' : '保存用户名'}
+            {profileBusy ? t('profileSaving') : t('profileSave')}
           </button>
         </div>
       </section>
 
       <section className="panel panel-dark">
-        <h3 style={{ marginTop: 0, marginBottom: 10 }}>修改密码</h3>
-        <label className="ui-label" htmlFor="account-old-password">旧密码</label>
+        <h3 style={{ marginTop: 0, marginBottom: 10 }}>{t('passwordTitle')}</h3>
+        <label className="ui-label" htmlFor="account-old-password">{t('oldPassword')}</label>
         <input
           id="account-old-password"
           className="ui-input"
           type="password"
           value={oldPassword}
           onChange={e => setOldPassword(e.target.value)}
-          placeholder="请输入旧密码"
+          placeholder={t('oldPlaceholder')}
           disabled={loading || passwordBusy}
         />
-        <label className="ui-label" htmlFor="account-new-password">新密码</label>
+        <label className="ui-label" htmlFor="account-new-password">{t('newPassword')}</label>
         <input
           id="account-new-password"
           className="ui-input"
           type="password"
           value={newPassword}
           onChange={e => setNewPassword(e.target.value)}
-          placeholder="请输入新密码"
+          placeholder={t('newPlaceholder')}
           disabled={loading || passwordBusy}
         />
-        <label className="ui-label" htmlFor="account-confirm-password">确认新密码</label>
+        <label className="ui-label" htmlFor="account-confirm-password">{t('confirmNewPassword')}</label>
         <input
           id="account-confirm-password"
           className="ui-input"
           type="password"
           value={confirmPassword}
           onChange={e => setConfirmPassword(e.target.value)}
-          placeholder="请再次输入新密码"
+          placeholder={t('confirmPlaceholder')}
           disabled={loading || passwordBusy}
         />
         <div className="action-row">
@@ -269,7 +271,7 @@ export default function AccountPage() {
             onClick={changePassword}
             disabled={loading || passwordBusy}
           >
-            {passwordBusy ? '更新中...' : '更新密码'}
+            {passwordBusy ? t('passwordUpdating') : t('passwordUpdate')}
           </button>
         </div>
       </section>

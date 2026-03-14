@@ -16,7 +16,10 @@
     "ensure:test-user": "node scripts/ensure-test-user.mjs",
     "logs:dev": "sh -c 'tail -f logs/dev.log'",
     "logs:start": "sh -c 'tail -n 200 -f logs/start.log'",
-    "logs:supervisor": "sh -c 'tail -n 200 -f logs/supervisor.log'"
+    "logs:supervisor": "sh -c 'tail -n 200 -f logs/supervisor.log'",
+    "recover": "node scripts/recover-uploads.mjs",
+    "recover:status": "node scripts/recover-uploads.mjs --status",
+    "recover:lookup": "node scripts/recover-uploads.mjs --lookup"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.98.0",
