@@ -5,12 +5,13 @@ import { readConfigForUser } from '../_lib/config-store'
 import { createMeetingJob } from '../_lib/meeting-notes'
 import { requireUserAuth } from '../_lib/user-auth'
 import { ingestUploadedLocalFile } from '../_lib/upload-ingest'
+import { validateDeviceSessionForUpload } from '../_lib/recorder-multiuser-store'
 
 const UPLOAD_DIR = join(process.cwd(), 'uploads')
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Device-Session-Token',
 }
 
 // 确保上传目录存在
@@ -45,14 +46,29 @@ function safeFileName(name) {
 export async function POST(request) {
   try {
     await ensureUploadDir()
+    let userId = ''
     const auth = await requireUserAuth(request)
-    if (!auth.ok) {
-      return Response.json(
-        { success: false, error: auth.error || '未登录' },
-        { status: auth.status || 401, headers: CORS_HEADERS }
-      )
+    if (auth.ok) {
+      userId = String(auth.user?.id || '').trim()
+    } else {
+      const sessionToken = String(request.headers.get('x-device-session-token') || '').trim()
+      if (!sessionToken) {
+        return Response.json(
+          { success: false, error: auth.error || '未登录' },
+          { status: auth.status || 401, headers: CORS_HEADERS }
+        )
+      }
+      try {
+        const deviceAuth = await validateDeviceSessionForUpload(sessionToken)
+        userId = String(deviceAuth?.userId || '').trim()
+      } catch (error) {
+        return Response.json(
+          { success: false, error: String(error?.message || '设备会话无效') },
+          { status: 401, headers: CORS_HEADERS }
+        )
+      }
     }
-    const userId = String(auth.user?.id || '').trim()
+
     if (!userId) {
       return Response.json(
         { success: false, error: '用户信息无效，请重新登录' },

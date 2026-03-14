@@ -204,8 +204,10 @@ export async function middleware(request) {
     const userSession = String(request.cookies.get(ACCESS_COOKIE)?.value || '').trim()
     const refreshToken = String(request.cookies.get(REFRESH_COOKIE)?.value || '').trim()
     const authHeader = String(request.headers.get('authorization') || '').trim()
+    const deviceSessionToken = String(request.headers.get('x-device-session-token') || '').trim()
     const hasBearerAuth = /^bearer\s+/i.test(authHeader)
     const bearerToken = hasBearerAuth ? authHeader.replace(/^bearer\s+/i, '').trim() : ''
+    const hasDeviceSessionToken = !!deviceSessionToken
     const hasUserSession = !!userSession
     const hasRefreshToken = !!refreshToken
     const protectedApiPrefixes = [
@@ -224,6 +226,7 @@ export async function middleware(request) {
     const isProtectedApi = protectedApiPrefixes.some(prefix => pathname.startsWith(prefix))
 
     if (!isProtectedApi) return NextResponse.next()
+    if (pathname === '/api/upload' && hasDeviceSessionToken) return NextResponse.next()
 
     if (hasBearerAuth) {
       const verified = await validateAccessTokenWithSupabase(bearerToken)
