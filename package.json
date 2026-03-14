@@ -26,6 +26,7 @@
     "ali-oss": "^6.23.0",
     "multiparty": "^4.2.3",
     "next": "16.1.6",
+    "next-intl": "^4.8.3",
     "opusscript": "^0.1.1",
     "p-queue": "^9.1.0",
     "proxy-agent": "^5.0.0",
