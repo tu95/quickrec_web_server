@@ -19,7 +19,8 @@
     "logs:supervisor": "sh -c 'tail -n 200 -f logs/supervisor.log'",
     "recover": "node scripts/recover-uploads.mjs",
     "recover:status": "node scripts/recover-uploads.mjs --status",
-    "recover:lookup": "node scripts/recover-uploads.mjs --lookup"
+    "recover:lookup": "node scripts/recover-uploads.mjs --lookup",
+    "recover:auto": "node scripts/recover-auto.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.98.0",

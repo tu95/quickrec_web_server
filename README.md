@@ -118,6 +118,16 @@ tail -n 100 logs/supervisor.log
 npm run recover:status
 ```
 
+一键触发 pending 恢复上传并打印实时日志（管理员）：
+
+```bash
+npm run recover:auto
+```
+
+说明：
+- 该命令会调用服务端管理员 API，请先确保服务已启动（默认 `http://127.0.0.1:3000`）。
+- 默认读取 `ADMIN_SETTINGS_TOKEN` 作为管理员鉴权头；也可传参覆盖：`--origin`、`--token`。
+
 常见输出说明：
 - `[已记录]`：该文件已在 pending 队列里，可等待自动恢复。
 - `[未记录]`：磁盘上有文件，但 pending 中没有对应任务，需要手动补录。
@@ -143,13 +153,14 @@ npm run recover -- --user-id <UUID> --file <文件名>
 npm run recover -- --user-id <UUID> --dry-run
 ```
 
-写入 pending 后，满足任一条件即可自动恢复上传：
-- 服务重启后首次收到 `upload-chunk` 请求
-- 服务运行中再次收到 `upload-chunk` 请求
+写入 pending 后，可通过以下方式触发恢复上传：
+- 执行 `npm run recover:auto` 一键触发恢复并查看每个任务日志
+- 恢复任务会按 pending 中记录的 `user_id` 重新上传到对应用户
 
 排查提示：
 - 若 `recover:lookup` 报 `Could not find the table 'public.devices'`，说明数据库结构不是旧 `devices` 表，应使用当前 `recorder_*` 表结构（仓库内 `supabase/schema.sql`）。
 - 若持续出现 OSS 60 秒超时，优先检查 OSS endpoint/region/网络连通性。
+- `recover:auto` 支持可选参数：`--poll-ms 1000 --timeout-ms 1200000`（轮询间隔/总超时毫秒）。
 
 ### 6. 停止后台服务
 

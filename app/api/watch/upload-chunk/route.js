@@ -45,7 +45,6 @@ const asyncUploadJobMap = new Map()
 const recentAsyncUploadJobs = []
 
 let asyncUploadRunning = false
-let pendingJobsRecovered = false
 
 function withCorsHeaders(extra) {
   return Object.assign({}, CORS_HEADERS, extra || {})
@@ -224,6 +223,7 @@ function snapshotAsyncJob(job) {
     userId: String(job.userId || ''),
     deviceDbId: String(job.deviceDbId || ''),
     deviceIdentity: String(job.deviceIdentity || ''),
+    localFileName: String(job.localFileName || ''),
     inputFileName: String(job.inputFileName || ''),
     outputFileName: String(job.outputFileName || ''),
     recordingId: String(job.recordingId || ''),
@@ -232,6 +232,41 @@ function snapshotAsyncJob(job) {
     signedUrl: String(job.signedUrl || ''),
     error: String(job.error || '')
   }
+}
+
+export function getAsyncUploadJobsByIds(jobIds) {
+  const ids = Array.isArray(jobIds) ? jobIds : []
+  const out = []
+  for (const rawId of ids) {
+    const id = String(rawId || '').trim()
+    if (!id) continue
+    const job = asyncUploadJobMap.get(id)
+    if (job) {
+      out.push(snapshotAsyncJob(job))
+      continue
+    }
+    out.push({
+      id,
+      status: 'missing',
+      attempt: 0,
+      maxRetries: 0,
+      queuedAt: 0,
+      startedAt: 0,
+      finishedAt: 0,
+      userId: '',
+      deviceDbId: '',
+      deviceIdentity: '',
+      localFileName: '',
+      inputFileName: '',
+      outputFileName: '',
+      recordingId: '',
+      objectKey: '',
+      url: '',
+      signedUrl: '',
+      error: ''
+    })
+  }
+  return out
 }
 
 async function cleanupTmpPart(filePath) {
@@ -461,18 +496,40 @@ function makeAuthError(errorText) {
   )
 }
 
+function hasQueuedOrRunningJob(jobId) {
+  const id = String(jobId || '')
+  if (!id) return false
+  if (asyncUploadQueue.some(item => String(item?.id || '') === id)) return true
+  const existing = asyncUploadJobMap.get(id)
+  if (!existing) return false
+  const status = String(existing.status || '')
+  return status === 'queued' || status === 'running'
+}
+
 async function recoverPendingJobs() {
-  if (pendingJobsRecovered) return
-  pendingJobsRecovered = true
+  const summary = {
+    total: 0,
+    requeued: 0,
+    skippedMissingFile: 0,
+    skippedAlreadyQueued: 0,
+    removedInvalid: 0,
+    requeuedJobIds: []
+  }
   try {
     const pending = await loadPendingJobs()
-    if (!pending.length) return
+    summary.total = pending.length
+    if (!pending.length) return summary
     console.log(`[pending-jobs] recovering ${pending.length} job(s)`)
     for (const saved of pending) {
       // 检查本地文件是否还在（可能是 .opus 或已转码的 .mp3）
       const localFileName = String(saved.localFileName || '')
       if (!localFileName) {
         await removePendingJob(saved.id)
+        summary.removedInvalid += 1
+        continue
+      }
+      if (hasQueuedOrRunningJob(saved.id)) {
+        summary.skippedAlreadyQueued += 1
         continue
       }
       const localPath = join(UPLOAD_DIR, localFileName)
@@ -486,6 +543,7 @@ async function recoverPendingJobs() {
       if (!fileExists) {
         console.warn('[pending-jobs] skip, file missing', { id: saved.id, localFileName })
         await removePendingJob(saved.id)
+        summary.skippedMissingFile += 1
         continue
       }
       console.log('[pending-jobs] re-queue', { id: saved.id, localFileName })
@@ -511,18 +569,32 @@ async function recoverPendingJobs() {
       asyncUploadQueue.push(job)
       asyncUploadJobMap.set(job.id, job)
       pushRecentAsyncJob(snapshotAsyncJob(job))
+      summary.requeued += 1
+      summary.requeuedJobIds.push(String(job.id || ''))
     }
     if (asyncUploadQueue.length > 0) {
       setTimeout(() => { void runAsyncUploadQueue() }, 500)
     }
   } catch (err) {
     console.error('[pending-jobs] recover error', String(err?.message || err))
+    throw err
+  }
+  return summary
+}
+
+export async function triggerPendingUploadsRecovery() {
+  await ensureDirs()
+  await cleanupStaleUploadSessions()
+  const summary = await recoverPendingJobs()
+  return {
+    ...summary,
+    queueLength: asyncUploadQueue.length,
+    running: asyncUploadRunning
   }
 }
 
 export async function POST(request) {
   let sessionCacheKey = ''
-  void recoverPendingJobs()
   const configError = getSupabaseConfigError()
   if (configError) {
     return Response.json(

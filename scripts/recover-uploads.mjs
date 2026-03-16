@@ -6,6 +6,7 @@
  * 用法:
  *   npm run recover -- --status              # 查看遗留文件和 pending 任务状态
  *   npm run recover -- --lookup              # 查看最近活跃用户，帮助确认文件归属
+ *   npm run recover:auto                     # 一键触发 pending 恢复并输出上传日志
  *   npm run recover -- --user-id <UUID>      # 为所有遗留文件创建待上传任务
  *   npm run recover -- --user-id <UUID> --file 20260313_21-22-40.mp3  # 只处理指定文件
  *   npm run recover -- --dry-run --user-id <UUID>  # 只预览，不写入
@@ -360,7 +361,8 @@ async function showStatus() {
     console.log('  npm run recover -- --user-id <UUID>               # 再补传')
   }
   if (jobs.filter(j => j.status === 'failed' || j.status === 'queued').length > 0) {
-    console.log('\n有待恢复的任务，重启服务后下次 upload-chunk 请求会自动触发恢复。')
+    console.log('\n有待恢复的任务，可执行以下命令手动触发上传:')
+    console.log('  npm run recover:auto')
   }
   console.log('')
 }
@@ -399,6 +401,7 @@ function main() {
     console.log('用法:')
     console.log('  npm run recover:status                                  # 查看状态')
     console.log('  npm run recover:lookup                                  # 查看最近用户')
+    console.log('  npm run recover:auto                                    # 一键触发 pending 恢复并输出上传日志')
     console.log('  npm run recover -- --user-id <UUID>                     # 补传所有遗留文件')
     console.log('  npm run recover -- --user-id <UUID> --file <name>      # 补传指定文件')
     console.log('  npm run recover -- --user-id <UUID> --dry-run          # 预览不执行')
@@ -464,8 +467,7 @@ function main() {
 
   writePendingStore(store)
   console.log(`\n已写入 ${added} 个任务到 ${PENDING_FILE}`)
-  console.log('服务重启后（或下次有 upload-chunk 请求时）会自动恢复上传。')
-  console.log('如需立刻触发，可执行: curl -s -X POST http://localhost:3000/api/watch/upload-chunk | head -c 200\n')
+  console.log('请执行 npm run recover:auto 一键触发恢复上传并查看日志。\n')
 }
 
 main()
