@@ -56,40 +56,185 @@ function getSupabase() {
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
 }
 
+function maybeGetSupabase() {
+  const url = env('SUPABASE_URL') || env('NEXT_PUBLIC_SUPABASE_URL')
+  const key = env('SUPABASE_SERVICE_ROLE_KEY')
+  if (!url || !key) return null
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
+}
+
+function isMissingTableError(error, tableName) {
+  const code = String(error?.code || '').toUpperCase()
+  const text = String(error?.message || error || '').toLowerCase()
+  if (code === 'PGRST205' || code === 'PGRST202') return true
+  return text.includes(String(tableName || '').toLowerCase()) && text.includes('could not find')
+}
+
+function toDisplayName(user) {
+  const meta = user && typeof user.user_metadata === 'object' ? user.user_metadata : {}
+  return String(meta.display_name || meta.name || '').trim()
+}
+
+async function lookupUserMapById(sb, userIds) {
+  const out = {}
+  for (const userId of userIds) {
+    const uid = String(userId || '').trim()
+    if (!uid) continue
+    try {
+      const { data, error } = await sb.auth.admin.getUserById(uid)
+      if (error) {
+        out[uid] = { email: '', display_name: '' }
+        continue
+      }
+      const user = data?.user || null
+      out[uid] = {
+        email: String(user?.email || '').trim(),
+        display_name: toDisplayName(user)
+      }
+    } catch {
+      out[uid] = { email: '', display_name: '' }
+    }
+  }
+  return out
+}
+
+async function queryRecentDeviceBindings(sb) {
+  const { data, error } = await sb
+    .from('recorder_user_devices')
+    .select(`
+      user_id,
+      bound_at,
+      status,
+      device:recorder_devices (
+        device_identity
+      )
+    `)
+    .order('bound_at', { ascending: false })
+    .limit(20)
+
+  if (error) {
+    if (isMissingTableError(error, 'recorder_user_devices')) {
+      return { rows: [], source: 'missing_new_schema' }
+    }
+    throw error
+  }
+  return {
+    source: 'recorder_schema',
+    rows: (Array.isArray(data) ? data : []).map(item => ({
+      user_id: String(item?.user_id || '').trim(),
+      bound_at: item?.bound_at || '',
+      status: String(item?.status || '').trim(),
+      device_identity: String(item?.device?.device_identity || '').trim()
+    }))
+  }
+}
+
+async function queryLegacyDevices(sb) {
+  const { data, error } = await sb
+    .from('devices')
+    .select('id, device_identity, user_id, bound_at, status')
+    .order('bound_at', { ascending: false })
+    .limit(20)
+  if (error) throw error
+  return {
+    source: 'legacy_schema',
+    rows: (Array.isArray(data) ? data : []).map(item => ({
+      user_id: String(item?.user_id || '').trim(),
+      bound_at: item?.bound_at || '',
+      status: String(item?.status || '').trim(),
+      device_identity: String(item?.device_identity || '').trim()
+    }))
+  }
+}
+
+function buildPendingOwnerIndex(jobs) {
+  const pendingFileSet = new Set()
+  const ownerIndex = new Map()
+
+  const addOwner = (fileName, userId) => {
+    const name = String(fileName || '').trim()
+    const uid = String(userId || '').trim()
+    if (!name) return
+    pendingFileSet.add(name)
+    if (!uid) return
+    const existing = ownerIndex.get(name) || new Set()
+    existing.add(uid)
+    ownerIndex.set(name, existing)
+  }
+
+  for (const j of jobs) {
+    const localFileName = String(j?.localFileName || '').trim()
+    const userId = String(j?.userId || '').trim()
+    if (!localFileName) continue
+    addOwner(localFileName, userId)
+
+    if (localFileName.toLowerCase().endsWith('.opus')) {
+      addOwner(localFileName.replace(/\.opus$/i, '.mp3'), userId)
+    } else if (localFileName.toLowerCase().endsWith('.mp3')) {
+      addOwner(localFileName.replace(/\.mp3$/i, '.opus'), userId)
+    }
+  }
+
+  return {
+    pendingFileSet,
+    ownerIndex
+  }
+}
+
+function formatUserDetails(userId, userMap) {
+  const uid = String(userId || '').trim()
+  if (!uid) return 'user_id: (无)'
+  const user = userMap && typeof userMap === 'object' ? (userMap[uid] || {}) : {}
+  const email = user.email || '(无邮箱)'
+  const name = user.display_name || '(无用户名)'
+  return `user_id: ${uid}  email: ${email}  name: ${name}`
+}
+
+async function loadUserMapForStatus(userIds) {
+  const ids = [...new Set((userIds || []).map(v => String(v || '').trim()).filter(Boolean))]
+  if (ids.length === 0) return { userMap: {}, warning: '' }
+
+  const sb = maybeGetSupabase()
+  if (!sb) {
+    return {
+      userMap: {},
+      warning: '未配置 SUPABASE_URL 或 SUPABASE_SERVICE_ROLE_KEY，无法显示邮箱/用户名。'
+    }
+  }
+
+  const userMap = await lookupUserMapById(sb, ids)
+  const foundCount = ids.filter(id => String(userMap[id]?.email || '').trim() || String(userMap[id]?.display_name || '').trim()).length
+  if (foundCount === 0) {
+    return {
+      userMap,
+      warning: '用户信息查询为空（可能是网络问题、Service Role 权限不足，或用户已不存在）。'
+    }
+  }
+  return { userMap, warning: '' }
+}
+
 // ── lookup: 查最近活跃用户 ──
 
 async function lookupRecentUsers() {
   const sb = getSupabase()
   console.log('\n查询最近 24 小时内有设备活动的用户...\n')
 
-  const { data: devices, error } = await sb
-    .from('devices')
-    .select('id, device_identity, user_id, bound_at, status')
-    .order('bound_at', { ascending: false })
-    .limit(20)
-
-  if (error) {
-    console.error('查询失败:', error.message)
-    return
+  let result = await queryRecentDeviceBindings(sb)
+  if (result.source === 'missing_new_schema') {
+    result = await queryLegacyDevices(sb)
   }
-  if (!devices || devices.length === 0) {
+
+  const devices = Array.isArray(result.rows) ? result.rows : []
+  if (devices.length === 0) {
     console.log('没有找到设备记录。')
     return
   }
 
   const userIds = [...new Set(devices.map(d => d.user_id).filter(Boolean))]
-  let userMap = {}
-  if (userIds.length > 0) {
-    const { data: profiles } = await sb
-      .from('user_profiles')
-      .select('id, email, display_name')
-      .in('id', userIds)
-    if (profiles) {
-      for (const p of profiles) userMap[p.id] = p
-    }
-  }
+  const userMap = userIds.length > 0 ? await lookupUserMapById(sb, userIds) : {}
 
-  console.log('最近设备绑定记录:')
+  const sourceText = result.source === 'legacy_schema' ? 'legacy devices 表' : 'recorder_user_devices 表'
+  console.log(`最近设备绑定记录（来源: ${sourceText}）:`)
   console.log('-'.repeat(100))
   for (const d of devices) {
     const user = userMap[d.user_id] || {}
@@ -146,11 +291,20 @@ function writePendingStore(jobs) {
 
 // ── status: 查看遗留文件和 pending 任务 ──
 
-function showStatus() {
+async function showStatus() {
   const orphans = scanOrphanFiles()
   const store = readPendingStore()
   const jobs = Object.values(store)
-  const pendingFileSet = new Set(jobs.map(j => j.localFileName))
+  const { pendingFileSet, ownerIndex } = buildPendingOwnerIndex(jobs)
+  const ownerUserIds = new Set()
+  for (const ids of ownerIndex.values()) {
+    for (const uid of ids) ownerUserIds.add(String(uid || '').trim())
+  }
+  for (const j of jobs) {
+    const uid = String(j?.userId || '').trim()
+    if (uid) ownerUserIds.add(uid)
+  }
+  const { userMap, warning } = await loadUserMapForStatus([...ownerUserIds])
 
   console.log('\n═══ uploads/ 遗留文件 ═══\n')
   if (orphans.length === 0) {
@@ -160,7 +314,11 @@ function showStatus() {
       const kb = (f.size / 1024).toFixed(1)
       const time = new Date(f.mtime).toLocaleString('zh-CN')
       const tracked = pendingFileSet.has(f.name) ? ' [已记录]' : ' [未记录]'
-      console.log(`  ${f.name}  (${kb} KB, ${time})${tracked}`)
+      const owners = [...(ownerIndex.get(f.name) || [])]
+      const ownerText = owners.length > 0
+        ? `  owner: ${owners.map(uid => formatUserDetails(uid, userMap)).join(' ; ')}`
+        : ''
+      console.log(`  ${f.name}  (${kb} KB, ${time})${tracked}${ownerText}`)
     }
   }
 
@@ -178,11 +336,15 @@ function showStatus() {
       console.log(`  [${status}] ${list.length} 个:`)
       for (const j of list) {
         const time = j.queuedAt ? new Date(j.queuedAt).toLocaleString('zh-CN') : '-'
-        const userShort = String(j.userId || '').slice(0, 8) || '(无)'
+        const userText = formatUserDetails(j.userId, userMap)
         const errText = j.error ? `  err: ${String(j.error).slice(0, 60)}` : ''
-        console.log(`    ${j.id}  file: ${j.localFileName}  user: ${userShort}..  queued: ${time}  attempt: ${j.attempt || 0}/${j.maxRetries || 3}${errText}`)
+        console.log(`    ${j.id}  file: ${j.localFileName}  ${userText}  queued: ${time}  attempt: ${j.attempt || 0}/${j.maxRetries || 3}${errText}`)
       }
     }
+  }
+
+  if (warning) {
+    console.log(`\n[提示] ${warning}`)
   }
 
   // 汇总
@@ -217,7 +379,10 @@ function main() {
   }
 
   if (hasFlag('--status')) {
-    showStatus()
+    showStatus().catch(err => {
+      console.error('status 出错:', err.message)
+      process.exit(1)
+    })
     return
   }
 

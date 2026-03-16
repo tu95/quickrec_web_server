@@ -108,13 +108,56 @@ tail -n 300 logs/start.log
 tail -n 100 logs/supervisor.log
 ```
 
-### 5. 停止后台服务
+### 5. 上传失败恢复（管理员）
+
+当异步上传 OSS 超时（例如 `Response timeout for 60000ms`）时，音频文件会保留在 `uploads/`，并可能在 `uploads/.pending-jobs.json` 中保留失败任务，可由管理员补传。
+
+先查看当前状态（遗留文件 + pending 队列）：
+
+```bash
+npm run recover:status
+```
+
+常见输出说明：
+- `[已记录]`：该文件已在 pending 队列里，可等待自动恢复。
+- `[未记录]`：磁盘上有文件，但 pending 中没有对应任务，需要手动补录。
+- `owner: user_id/email/name`：脚本根据 pending 任务推断到的文件所属用户（若可访问 Supabase，会补齐邮箱和用户名）。
+- pending 任务明细中也会显示 `user_id + email + name`，便于管理员核对归属。
+
+如果不确定 `user_id`，先查询最近设备绑定用户：
+
+```bash
+npm run recover:lookup
+```
+
+然后执行补传任务写入：
+
+```bash
+# 补传 uploads 下所有遗留文件
+npm run recover -- --user-id <UUID>
+
+# 只补传某个文件
+npm run recover -- --user-id <UUID> --file <文件名>
+
+# 仅预览，不写入
+npm run recover -- --user-id <UUID> --dry-run
+```
+
+写入 pending 后，满足任一条件即可自动恢复上传：
+- 服务重启后首次收到 `upload-chunk` 请求
+- 服务运行中再次收到 `upload-chunk` 请求
+
+排查提示：
+- 若 `recover:lookup` 报 `Could not find the table 'public.devices'`，说明数据库结构不是旧 `devices` 表，应使用当前 `recorder_*` 表结构（仓库内 `supabase/schema.sql`）。
+- 若持续出现 OSS 60 秒超时，优先检查 OSS endpoint/region/网络连通性。
+
+### 6. 停止后台服务
 
 ```bash
 npm run stop:bg
 ```
 
-### 6. 机型预览安装二维码（本地生成 + React 页面展示）
+### 7. 机型预览安装二维码（本地生成 + React 页面展示）
 
 说明：
 - 生成动作依赖本机 `zeus`，请在你有 Zepp 开发环境的电脑执行。
