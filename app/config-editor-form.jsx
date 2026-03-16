@@ -41,13 +41,6 @@ const OSS_FIELD_KEYS = [
   'objectPrefixOpus'
 ]
 
-const OSS_PROVIDER_OPTIONS = [
-  { value: 's3_compatible', zh: '通用 S3', en: 'Generic S3' },
-  { value: 'cloudflare_r2', zh: 'Cloudflare R2', en: 'Cloudflare R2' },
-  { value: 'aliyun_oss', zh: '阿里云 OSS（S3 API）', en: 'Aliyun OSS (S3 API)' },
-  { value: 'aws_s3', zh: 'AWS S3', en: 'AWS S3' }
-]
-
 function buildSecretDirtyState(config) {
   const providerApiKeys = {}
   const providers = Array.isArray(config?.llm?.providers) ? config.llm.providers : []
@@ -188,21 +181,6 @@ export default function ConfigEditorForm({
     }
     validateCurrentOss(nextOss, false)
     updateAliyunSection('oss', { [field]: value })
-  }
-
-  function applyOssProviderPreset(provider) {
-    const current = config?.aliyun?.oss || {}
-    const nextPatch = { provider }
-    if (provider === 'cloudflare_r2') {
-      nextPatch.region = 'auto'
-    } else if (provider === 'aws_s3') {
-      if (!String(current.region || '').trim()) nextPatch.region = 'us-east-1'
-    } else if (provider === 'aliyun_oss') {
-      if (!String(current.region || '').trim()) nextPatch.region = 'oss-cn-hangzhou'
-    }
-    const nextOss = { ...current, ...nextPatch }
-    validateCurrentOss(nextOss, false)
-    updateAliyunSection('oss', nextPatch)
   }
 
   function getFieldInputStyle(field) {
@@ -551,17 +529,12 @@ export default function ConfigEditorForm({
             <div style={fieldGridStyle}>
               <div>
                 <label style={labelStyle}>Provider</label>
-                <select
-                  value={config.aliyun.oss.provider || 's3_compatible'}
-                  onChange={e => applyOssProviderPreset(e.target.value)}
+                <input
+                  value={config.aliyun.oss.provider || ''}
+                  onChange={e => updateOssField('provider', e.target.value)}
                   style={getFieldInputStyle('provider')}
-                >
-                  {OSS_PROVIDER_OPTIONS.map(option => (
-                    <option key={option.value} value={option.value}>
-                      {isEn ? option.en : option.zh}
-                    </option>
-                  ))}
-                </select>
+                  placeholder={isEn ? 'Custom label, e.g. r2-prod' : '自定义标签，例如 r2-prod'}
+                />
                 {renderFieldError('provider')}
               </div>
               <div>

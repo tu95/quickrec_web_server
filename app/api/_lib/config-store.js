@@ -119,7 +119,7 @@ export const DEFAULT_CONFIG = {
   },
   aliyun: {
     oss: {
-      provider: 's3_compatible',
+      provider: 's3',
       endpoint: '',
       region: '',
       bucket: '',
