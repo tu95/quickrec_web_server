@@ -63,7 +63,7 @@ export async function PUT(request) {
     return Response.json(
       {
         success: false,
-        error: 'OSS 配置校验失败',
+        error: '对象存储配置校验失败',
         fields: ossValidation.errors
       },
       { status: 400 }

@@ -1,4 +1,4 @@
-import OSS from 'ali-oss'
+import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3'
 import { requireSiteAuth } from '../../../../_lib/admin-auth'
 import { getUserConfigProfileById, mergeConfigWithSecretPreserve } from '../../../../_lib/config-store'
 import { logRuntimeError } from '../../../../_lib/runtime-log'
@@ -11,6 +11,18 @@ function pickAliyunConfig(body, baseConfig) {
     return mergeConfigWithSecretPreserve(baseConfig, { aliyun: body.aliyun }).aliyun || {}
   }
   return baseConfig?.aliyun || {}
+}
+
+function createClient(normalized) {
+  return new S3Client({
+    region: normalized.region || 'auto',
+    endpoint: `https://${normalized.endpoint}`,
+    forcePathStyle: true,
+    credentials: {
+      accessKeyId: normalized.accessKeyId,
+      secretAccessKey: normalized.accessKeySecret
+    }
+  })
 }
 
 export async function POST(request) {
@@ -31,7 +43,7 @@ export async function POST(request) {
     return Response.json(
       {
         success: false,
-        error: 'OSS 配置校验失败',
+        error: '对象存储配置校验失败',
         fields: validation.errors
       },
       { status: 400 }
@@ -40,20 +52,15 @@ export async function POST(request) {
 
   try {
     const normalizedOss = validation.normalized
-    const client = new OSS({
-      region: normalizedOss.region,
-      bucket: normalizedOss.bucket,
-      endpoint: normalizedOss.endpoint || undefined,
-      accessKeyId: normalizedOss.accessKeyId,
-      accessKeySecret: normalizedOss.accessKeySecret,
-      secure: true
-    })
-
-    const result = await client.list({ 'max-keys': 1 })
-    const objectCount = Array.isArray(result?.objects) ? result.objects.length : 0
+    const client = createClient(normalizedOss)
+    const result = await client.send(new ListObjectsV2Command({
+      Bucket: normalizedOss.bucket,
+      MaxKeys: 1
+    }))
+    const objectCount = Array.isArray(result?.Contents) ? result.Contents.length : 0
     return Response.json({
       success: true,
-      message: `OSS 连通成功，bucket=${normalizedOss.bucket}，示例对象数=${objectCount}`,
+      message: `对象存储连通成功，bucket=${normalizedOss.bucket}，示例对象数=${objectCount}`,
       detail: {
         bucket: normalizedOss.bucket,
         region: normalizedOss.region,

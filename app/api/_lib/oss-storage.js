@@ -1,5 +1,13 @@
-import OSS from 'ali-oss'
+import { createReadStream } from 'fs'
 import { basename } from 'path'
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client
+} from '@aws-sdk/client-s3'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { validateOssConfig } from '../../../lib/aliyun-validators'
 
 function trimSlash(value) {
@@ -29,23 +37,34 @@ function pickFirstError(errors) {
   return `${field}: ${String(message || '')}`.trim()
 }
 
-function createOssClientFromConfig(config) {
+function normalizeEndpointUrl(host) {
+  const text = String(host || '').trim().replace(/^https?:\/\//i, '')
+  if (!text) return ''
+  return `https://${text}`
+}
+
+function createS3ClientFromConfig(config) {
   const ossConfig = config?.aliyun?.oss || {}
   const validation = validateOssConfig(ossConfig)
   if (!validation.valid) {
     const detail = pickFirstError(validation.errors)
-    throw new Error(detail ? `OSS 配置无效: ${detail}` : 'OSS 配置无效')
+    throw new Error(detail ? `对象存储配置无效: ${detail}` : '对象存储配置无效')
   }
 
   const normalized = validation.normalized
-  const client = new OSS({
-    region: normalized.region,
-    bucket: normalized.bucket,
-    endpoint: normalized.endpoint || undefined,
-    accessKeyId: normalized.accessKeyId,
-    accessKeySecret: normalized.accessKeySecret,
-    secure: true
+  const endpoint = normalizeEndpointUrl(normalized.endpoint)
+  const region = String(normalized.region || '').trim() || 'auto'
+
+  const client = new S3Client({
+    region,
+    endpoint,
+    forcePathStyle: true,
+    credentials: {
+      accessKeyId: normalized.accessKeyId,
+      secretAccessKey: normalized.accessKeySecret
+    }
   })
+
   return {
     client,
     normalized
@@ -81,106 +100,151 @@ function pickObjectPrefix(normalized, safeFileName) {
   return trimSlash(rawPrefix)
 }
 
+function buildPublicUrl(publicBaseUrl, objectKey) {
+  const base = String(publicBaseUrl || '').replace(/\/+$/, '')
+  if (!base) return ''
+  return `${base}/${encodePath(objectKey)}`
+}
+
+async function signGetUrl(client, bucket, key, expiresSec, options) {
+  const command = new GetObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    ...(options?.forceAttachment
+      ? {
+          ResponseContentDisposition: `attachment; filename="${String(options.downloadFileName || 'recording').replace(/[\r\n"]/g, '_')}"`
+        }
+      : {})
+  })
+  return getSignedUrl(client, command, { expiresIn: expiresSec })
+}
+
+async function ensureObjectExists(client, bucket, key) {
+  try {
+    await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }))
+    return true
+  } catch (error) {
+    const text = String(error?.name || error?.Code || error?.message || '').toLowerCase()
+    const status = Number(error?.$metadata?.httpStatusCode || 0)
+    if (status === 404 || text.includes('nosuchkey') || text.includes('notfound')) {
+      return false
+    }
+    throw error
+  }
+}
+
+async function readBodyToBuffer(body) {
+  if (!body) return Buffer.alloc(0)
+  if (Buffer.isBuffer(body)) return body
+  if (body instanceof Uint8Array) return Buffer.from(body)
+  if (typeof body.transformToByteArray === 'function') {
+    const bytes = await body.transformToByteArray()
+    return Buffer.from(bytes)
+  }
+  if (typeof body.arrayBuffer === 'function') {
+    const ab = await body.arrayBuffer()
+    return Buffer.from(ab)
+  }
+  if (typeof body[Symbol.asyncIterator] === 'function') {
+    const chunks = []
+    for await (const chunk of body) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    }
+    return Buffer.concat(chunks)
+  }
+  throw new Error('对象存储读取失败: 不支持的响应体类型')
+}
+
 export async function uploadLocalFileToOss(config, localFilePath, objectFileName, options) {
   const safeFileName = basename(String(objectFileName || ''))
   if (!safeFileName || safeFileName === '.' || safeFileName === '..') {
-    throw new Error('OSS 上传失败: 无效文件名')
+    throw new Error('对象存储上传失败: 无效文件名')
   }
 
-  const { client, normalized } = createOssClientFromConfig(config)
+  const { client, normalized } = createS3ClientFromConfig(config)
   const prefix = pickObjectPrefix(normalized, safeFileName)
   const objectKey = prefix ? `${prefix}/${safeFileName}` : safeFileName
-  await client.put(objectKey, localFilePath)
+
+  await client.send(new PutObjectCommand({
+    Bucket: normalized.bucket,
+    Key: objectKey,
+    Body: createReadStream(localFilePath)
+  }))
 
   const signedUrlExpiresSec = toSignedUrlExpiresSec(options?.signedUrlExpiresSec)
   let signedUrl = ''
   try {
-    signedUrl = client.signatureUrl(objectKey, {
-      method: 'GET',
-      expires: signedUrlExpiresSec
-    })
+    signedUrl = await signGetUrl(client, normalized.bucket, objectKey, signedUrlExpiresSec)
   } catch (error) {
-    throw new Error(`OSS 签名链接生成失败: ${String(error && error.message ? error.message : error)}`)
+    throw new Error(`对象存储签名链接生成失败: ${String(error && error.message ? error.message : error)}`)
   }
 
-  const publicBaseUrl = String(normalized.publicBaseUrl || '').replace(/\/+$/, '')
-  const publicUrl = publicBaseUrl
-    ? `${publicBaseUrl}/${encodePath(objectKey)}`
-    : ''
+  const publicUrl = buildPublicUrl(normalized.publicBaseUrl, objectKey)
 
   return {
     objectKey,
-    url: signedUrl,  // 使用签名 URL，确保私有 Bucket 可访问
+    url: signedUrl,
     signedUrl,
     signedUrlExpiresSec,
-    bucket: normalized.bucket
+    bucket: normalized.bucket,
+    publicUrl
   }
 }
 
 export async function uploadBufferToOss(config, buffer, objectFileName, options) {
   const safeFileName = basename(String(objectFileName || ''))
   if (!safeFileName || safeFileName === '.' || safeFileName === '..') {
-    throw new Error('OSS 上传失败: 无效文件名')
+    throw new Error('对象存储上传失败: 无效文件名')
   }
   if (!Buffer.isBuffer(buffer) || buffer.length <= 0) {
-    throw new Error('OSS 上传失败: 空文件内容')
+    throw new Error('对象存储上传失败: 空文件内容')
   }
 
-  const { client, normalized } = createOssClientFromConfig(config)
+  const { client, normalized } = createS3ClientFromConfig(config)
   const prefix = pickObjectPrefix(normalized, safeFileName)
   const objectKey = prefix ? `${prefix}/${safeFileName}` : safeFileName
-  await client.put(objectKey, buffer)
+
+  await client.send(new PutObjectCommand({
+    Bucket: normalized.bucket,
+    Key: objectKey,
+    Body: buffer
+  }))
 
   const signedUrlExpiresSec = toSignedUrlExpiresSec(options?.signedUrlExpiresSec)
   let signedUrl = ''
   try {
-    signedUrl = client.signatureUrl(objectKey, {
-      method: 'GET',
-      expires: signedUrlExpiresSec
-    })
+    signedUrl = await signGetUrl(client, normalized.bucket, objectKey, signedUrlExpiresSec)
   } catch (error) {
-    throw new Error(`OSS 签名链接生成失败: ${String(error && error.message ? error.message : error)}`)
+    throw new Error(`对象存储签名链接生成失败: ${String(error && error.message ? error.message : error)}`)
   }
 
-  const publicBaseUrl = String(normalized.publicBaseUrl || '').replace(/\/+$/, '')
-  const publicUrl = publicBaseUrl
-    ? `${publicBaseUrl}/${encodePath(objectKey)}`
-    : ''
+  const publicUrl = buildPublicUrl(normalized.publicBaseUrl, objectKey)
 
   return {
     objectKey,
-    url: signedUrl,  // 使用签名 URL，确保私有 Bucket 可访问
+    url: signedUrl,
     signedUrl,
     signedUrlExpiresSec,
-    bucket: normalized.bucket
+    bucket: normalized.bucket,
+    publicUrl
   }
 }
 
-export function signOssObjectUrl(config, objectKey, options) {
+export async function signOssObjectUrl(config, objectKey, options) {
   const key = normalizeObjectKey(objectKey)
   if (!key) {
-    throw new Error('OSS 签名失败: objectKey 不能为空')
+    throw new Error('对象存储签名失败: objectKey 不能为空')
   }
   const effectiveConfig = withBucketOverride(config, options?.ossBucket)
-  const { client, normalized } = createOssClientFromConfig(effectiveConfig)
+  const { client, normalized } = createS3ClientFromConfig(effectiveConfig)
   const signedUrlExpiresSec = toSignedUrlExpiresSec(options?.signedUrlExpiresSec)
-  const forceAttachment = options?.forceAttachment === true
-  const downloadFileName = String(options?.downloadFileName || '').trim()
-  const response = {}
-  if (forceAttachment) {
-    const safeName = downloadFileName.replace(/[\r\n"]/g, '_') || 'recording'
-    response['content-disposition'] = `attachment; filename="${safeName}"`
-  }
-  const signedUrl = client.signatureUrl(key, {
-    method: 'GET',
-    expires: signedUrlExpiresSec,
-    ...(forceAttachment ? { response } : {})
+
+  const signedUrl = await signGetUrl(client, normalized.bucket, key, signedUrlExpiresSec, {
+    forceAttachment: options?.forceAttachment === true,
+    downloadFileName: options?.downloadFileName
   })
 
-  const publicBaseUrl = String(normalized.publicBaseUrl || '').replace(/\/+$/, '')
-  const publicUrl = publicBaseUrl
-    ? `${publicBaseUrl}/${encodePath(key)}`
-    : ''
+  const publicUrl = buildPublicUrl(normalized.publicBaseUrl, key)
 
   return {
     objectKey: key,
@@ -195,39 +259,44 @@ export async function deleteOssObject(config, objectKey, options) {
   if (!key) return { deleted: false, skipped: true }
   const bucketOverride = options?.ossBucket
   const effectiveConfig = withBucketOverride(config, bucketOverride)
-  const { client } = createOssClientFromConfig(effectiveConfig)
-  try {
-    await client.delete(key)
-    return { deleted: true, skipped: false }
-  } catch (error) {
-    const text = String(error?.message || error || '')
-    if (text.toLowerCase().includes('nosuchkey') || text.toLowerCase().includes('not found')) {
-      return { deleted: false, skipped: false, notFound: true }
-    }
-    throw error
+  const { client, normalized } = createS3ClientFromConfig(effectiveConfig)
+
+  const exists = await ensureObjectExists(client, normalized.bucket, key)
+  if (!exists) {
+    return { deleted: false, skipped: false, notFound: true }
   }
+
+  await client.send(new DeleteObjectCommand({ Bucket: normalized.bucket, Key: key }))
+  return { deleted: true, skipped: false }
 }
 
 export async function getOssObject(config, objectKey, options) {
   const key = normalizeObjectKey(objectKey)
   if (!key) {
-    throw new Error('OSS 获取失败: objectKey 不能为空')
+    throw new Error('对象存储获取失败: objectKey 不能为空')
   }
   const bucketOverride = options?.ossBucket
   const effectiveConfig = withBucketOverride(config, bucketOverride)
-  const { client, normalized } = createOssClientFromConfig(effectiveConfig)
+  const { client, normalized } = createS3ClientFromConfig(effectiveConfig)
+
   try {
-    const result = await client.get(key)
+    const result = await client.send(new GetObjectCommand({
+      Bucket: normalized.bucket,
+      Key: key
+    }))
+
+    const content = await readBodyToBuffer(result.Body)
     return {
-      content: result.content,
-      contentType: result.res.headers['content-type'] || 'application/octet-stream',
-      contentLength: Number(result.res.headers['content-length']) || 0,
+      content,
+      contentType: result.ContentType || 'application/octet-stream',
+      contentLength: Number(result.ContentLength || content.length || 0),
       objectKey: key,
       bucket: normalized.bucket
     }
   } catch (error) {
-    const text = String(error?.message || error || '')
-    if (text.toLowerCase().includes('nosuchkey') || text.toLowerCase().includes('not found')) {
+    const text = String(error?.name || error?.Code || error?.message || '').toLowerCase()
+    const status = Number(error?.$metadata?.httpStatusCode || 0)
+    if (status === 404 || text.includes('nosuchkey') || text.includes('notfound')) {
       return null
     }
     throw error

@@ -119,7 +119,7 @@ export const DEFAULT_CONFIG = {
   },
   aliyun: {
     oss: {
-      provider: 'aliyun_oss',
+      provider: 's3_compatible',
       endpoint: '',
       region: '',
       bucket: '',
@@ -245,15 +245,11 @@ function normalizeConfig(raw) {
   const defaultProviderId = String(data?.llm?.defaultProviderId || providers[0].id)
   const defaultPromptId = String(data?.prompts?.defaultPromptId || prompts[0].id)
   const hasAsrDiarizationFlag = data?.aliyun?.asr?.diarizationEnabled != null
-  const rawLegacyPrefix = String(data?.aliyun?.oss?.objectPrefix || '').trim()
-  const prefixBase = rawLegacyPrefix || 'recordings'
   const objectPrefixMp3 = String(
-    data?.aliyun?.oss?.objectPrefixMp3
-    || (rawLegacyPrefix ? `${prefixBase}/mp3` : DEFAULT_CONFIG.aliyun.oss.objectPrefixMp3)
+    data?.aliyun?.oss?.objectPrefixMp3 || DEFAULT_CONFIG.aliyun.oss.objectPrefixMp3
   ).trim()
   const objectPrefixOpus = String(
-    data?.aliyun?.oss?.objectPrefixOpus
-    || (rawLegacyPrefix ? `${prefixBase}/opus` : DEFAULT_CONFIG.aliyun.oss.objectPrefixOpus)
+    data?.aliyun?.oss?.objectPrefixOpus || DEFAULT_CONFIG.aliyun.oss.objectPrefixOpus
   ).trim()
   const diarizationEnabled = hasAsrDiarizationFlag
     ? data.aliyun.asr.diarizationEnabled !== false

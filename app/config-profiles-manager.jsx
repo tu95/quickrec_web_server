@@ -1,18 +1,20 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useLocale } from 'next-intl'
 import ConfigEditorForm from './config-editor-form'
 import { useCachedApi } from './_lib/use-cached-api'
 
 const USER_SYSTEM_DEFAULT_ID = '__system_default__'
 
-// 服务类型
-const SERVICE_TYPES = [
-  { key: 'oss', label: 'OSS 存储', icon: '📦' },
-  { key: 'asr', label: 'ASR 语音识别', icon: '🎙️' },
-  { key: 'llm', label: 'LLM 大模型', icon: '🤖' },
-  { key: 'prompt', label: '会议纪要 Prompt', icon: '📝' }
-]
+function buildServiceTypes(isEn) {
+  return [
+    { key: 'oss', label: isEn ? 'Object Storage' : '对象存储', icon: '📦' },
+    { key: 'asr', label: isEn ? 'ASR Speech' : 'ASR 语音识别', icon: '🎙️' },
+    { key: 'llm', label: isEn ? 'LLM Models' : 'LLM 大模型', icon: '🤖' },
+    { key: 'prompt', label: isEn ? 'Meeting Prompt' : '会议纪要 Prompt', icon: '📝' }
+  ]
+}
 
 export default function ConfigProfilesManager({
   mode = 'user',
@@ -23,6 +25,9 @@ export default function ConfigProfilesManager({
   allowTesting = false,
   hideHeader = false
 }) {
+  const locale = useLocale()
+  const isEn = String(locale || '').toLowerCase().startsWith('en')
+  const serviceTypes = buildServiceTypes(isEn)
   const [busyMap, setBusyMap] = useState({})
   const [saveBusy, setSaveBusy] = useState(false)
   const [profiles, setProfiles] = useState([])
@@ -393,7 +398,7 @@ export default function ConfigProfilesManager({
           </div>
 
           {/* 服务类型分组 */}
-          {SERVICE_TYPES.map(service => {
+          {serviceTypes.map(service => {
             const serviceKey = service.key
             const isServiceSelected = selectedService === serviceKey
             return (
@@ -481,7 +486,7 @@ export default function ConfigProfilesManager({
                 <div style={readonlyCardStyle}>
                   <div style={readonlyBadgeStyle}>系统默认</div>
                   <div style={readonlyTextStyle}>
-                    {selectedService === 'oss' && 'OSS 存储使用系统默认配置。'}
+                    {selectedService === 'oss' && (isEn ? 'Object Storage uses system default config.' : '对象存储使用系统默认配置。')}
                     {selectedService === 'asr' && 'ASR 转写使用系统默认配置。'}
                     {selectedService === 'llm' && 'LLM 大模型使用系统默认配置。'}
                     {selectedService === 'prompt' && '会议纪要 Prompt 使用系统默认配置。'}

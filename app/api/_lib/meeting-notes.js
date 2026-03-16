@@ -710,7 +710,7 @@ async function resolveRecordingForJob(job) {
   return recording
 }
 
-function resolveAsrSourceFromRecording(config, recording) {
+async function resolveAsrSourceFromRecording(config, recording) {
   const sourceName = safeFileName(recording?.file_name || recording?.fileName || '')
   if (!sourceName) {
     throw new Error('录音文件名无效')
@@ -719,7 +719,7 @@ function resolveAsrSourceFromRecording(config, recording) {
   const ossBucket = String(recording?.oss_bucket || recording?.ossBucket || '').trim()
   const ossUrl = String(recording?.oss_url || recording?.ossUrl || '').trim()
   if (ossKey) {
-    const signed = signOssObjectUrl(config, ossKey, {
+    const signed = await signOssObjectUrl(config, ossKey, {
       signedUrlExpiresSec: config?.aliyun?.oss?.asrSignedUrlExpiresSec,
       ossBucket
     })
@@ -765,7 +765,7 @@ async function runMeetingJob(job) {
     await ensureJobNotCancelled(current)
     const config = await readConfigForUser(current.userId)
     await ensureJobNotCancelled(current)
-    const asrSource = resolveAsrSourceFromRecording(config, recording)
+    const asrSource = await resolveAsrSourceFromRecording(config, recording)
     const asrUrl = String(asrSource.asrAudioUrl || '').trim()
     if (!asrUrl) {
       throw new Error('录音缺少可用的 ASR 访问链接')

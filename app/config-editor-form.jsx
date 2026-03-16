@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { useLocale } from 'next-intl'
 import { validateOssConfig } from '../lib/aliyun-validators'
 
 function makeId(prefix) {
@@ -40,6 +41,13 @@ const OSS_FIELD_KEYS = [
   'objectPrefixOpus'
 ]
 
+const OSS_PROVIDER_OPTIONS = [
+  { value: 's3_compatible', zh: '通用 S3', en: 'Generic S3' },
+  { value: 'cloudflare_r2', zh: 'Cloudflare R2', en: 'Cloudflare R2' },
+  { value: 'aliyun_oss', zh: '阿里云 OSS（S3 API）', en: 'Aliyun OSS (S3 API)' },
+  { value: 'aws_s3', zh: 'AWS S3', en: 'AWS S3' }
+]
+
 function buildSecretDirtyState(config) {
   const providerApiKeys = {}
   const providers = Array.isArray(config?.llm?.providers) ? config.llm.providers : []
@@ -68,6 +76,8 @@ export default function ConfigEditorForm({
   activeTab: initialActiveTab = 'oss',
   hideSaveButton = false
 }) {
+  const locale = useLocale()
+  const isEn = String(locale || '').toLowerCase().startsWith('en')
   const [activeTab, setActiveTab] = useState(initialActiveTab)
   const [modelsMap, setModelsMap] = useState({})
   const [modelsBusyMap, setModelsBusyMap] = useState({})
@@ -178,6 +188,21 @@ export default function ConfigEditorForm({
     }
     validateCurrentOss(nextOss, false)
     updateAliyunSection('oss', { [field]: value })
+  }
+
+  function applyOssProviderPreset(provider) {
+    const current = config?.aliyun?.oss || {}
+    const nextPatch = { provider }
+    if (provider === 'cloudflare_r2') {
+      nextPatch.region = 'auto'
+    } else if (provider === 'aws_s3') {
+      if (!String(current.region || '').trim()) nextPatch.region = 'us-east-1'
+    } else if (provider === 'aliyun_oss') {
+      if (!String(current.region || '').trim()) nextPatch.region = 'oss-cn-hangzhou'
+    }
+    const nextOss = { ...current, ...nextPatch }
+    validateCurrentOss(nextOss, false)
+    updateAliyunSection('oss', nextPatch)
   }
 
   function getFieldInputStyle(field) {
@@ -480,7 +505,7 @@ export default function ConfigEditorForm({
 
   // 子配置标签页
   const tabs = [
-    { key: 'oss', label: 'OSS 存储', icon: '📦' },
+    { key: 'oss', label: isEn ? 'Object Storage' : '对象存储', icon: '📦' },
     { key: 'asr', label: 'ASR 语音识别', icon: '🎙️' },
     { key: 'llm', label: 'LLM 大模型', icon: '🤖' }
   ]
@@ -507,8 +532,8 @@ export default function ConfigEditorForm({
           <section style={cardStyle}>
             <div style={sectionHeaderStyle}>
               <div>
-                <h3 style={sectionTitleStyle}>OSS 对象存储</h3>
-                <p style={sectionHintStyle}>录音文件上传和签名播放依赖这组配置。</p>
+                <h3 style={sectionTitleStyle}>{isEn ? 'Object Storage (S3 Compatible)' : '对象存储（S3 Compatible）'}</h3>
+                <p style={sectionHintStyle}>{isEn ? 'Recording upload and signed playback rely on this config.' : '录音文件上传和签名播放依赖这组配置。'}</p>
               </div>
               {allowTesting ? (
                 <div style={testActionRowStyle}>
@@ -518,7 +543,7 @@ export default function ConfigEditorForm({
                     </span>
                   ) : null}
                   <button style={ghostBtnStyle} onClick={() => testAliyunService('oss')} disabled={aliyunTestBusyMap.oss}>
-                    {aliyunTestBusyMap.oss ? '测试中...' : '测试 OSS'}
+                    {aliyunTestBusyMap.oss ? (isEn ? 'Testing...' : '测试中...') : (isEn ? 'Test Storage' : '测试对象存储')}
                   </button>
                 </div>
               ) : null}
@@ -526,7 +551,17 @@ export default function ConfigEditorForm({
             <div style={fieldGridStyle}>
               <div>
                 <label style={labelStyle}>Provider</label>
-                <input value={config.aliyun.oss.provider || ''} onChange={e => updateOssField('provider', e.target.value)} style={getFieldInputStyle('provider')} />
+                <select
+                  value={config.aliyun.oss.provider || 's3_compatible'}
+                  onChange={e => applyOssProviderPreset(e.target.value)}
+                  style={getFieldInputStyle('provider')}
+                >
+                  {OSS_PROVIDER_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {isEn ? option.en : option.zh}
+                    </option>
+                  ))}
+                </select>
                 {renderFieldError('provider')}
               </div>
               <div>
@@ -555,12 +590,12 @@ export default function ConfigEditorForm({
                 {renderFieldError('accessKeySecret')}
               </div>
               <div>
-                <label style={labelStyle}>OSS Public Base URL</label>
+                <label style={labelStyle}>{isEn ? 'Object Storage Public Base URL' : '对象存储 Public Base URL'}</label>
                 <input value={config.aliyun.oss.publicBaseUrl || ''} onChange={e => updateOssField('publicBaseUrl', e.target.value)} style={getFieldInputStyle('publicBaseUrl')} />
                 {renderFieldError('publicBaseUrl')}
               </div>
               <div>
-                <label style={labelStyle}>OSS MP3 Prefix</label>
+                <label style={labelStyle}>{isEn ? 'Object Storage MP3 Prefix' : '对象存储 MP3 Prefix'}</label>
                 <input
                   value={config.aliyun.oss.objectPrefixMp3 || ''}
                   onChange={e => updateOssField('objectPrefixMp3', e.target.value)}
@@ -569,7 +604,7 @@ export default function ConfigEditorForm({
                 {renderFieldError('objectPrefixMp3')}
               </div>
               <div>
-                <label style={labelStyle}>OSS OPUS Prefix</label>
+                <label style={labelStyle}>{isEn ? 'Object Storage OPUS Prefix' : '对象存储 OPUS Prefix'}</label>
                 <input
                   value={config.aliyun.oss.objectPrefixOpus || ''}
                   onChange={e => updateOssField('objectPrefixOpus', e.target.value)}

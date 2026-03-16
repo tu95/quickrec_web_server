@@ -236,18 +236,18 @@ async function loadLatestMeetingJobMap(userId) {
   return { byRecordingId, byFileName }
 }
 
-function resolveRecordingUrls(recording, config) {
+async function resolveRecordingUrls(recording, config) {
   const key = String(recording?.oss_key || '').trim()
   const bucket = String(recording?.oss_bucket || '').trim()
   const fileName = String(recording?.file_name || '').trim()
   const rawUrl = String(recording?.oss_url || '').trim()
   if (key && config) {
     try {
-      const streamSigned = signOssObjectUrl(config, key, {
+      const streamSigned = await signOssObjectUrl(config, key, {
         signedUrlExpiresSec: config?.aliyun?.oss?.asrSignedUrlExpiresSec,
         ossBucket: bucket
       })
-      const downloadSigned = signOssObjectUrl(config, key, {
+      const downloadSigned = await signOssObjectUrl(config, key, {
         signedUrlExpiresSec: config?.aliyun?.oss?.asrSignedUrlExpiresSec,
         ossBucket: bucket,
         forceAttachment: true,
@@ -298,7 +298,7 @@ export async function GET(request) {
       userConfig = await readConfigForUser(userId)
     } catch {}
 
-    const files = recordings.map((record) => {
+    const filesRaw = await Promise.all(recordings.map(async (record) => {
       const recordingId = String(record?.id || '').trim()
       const fileName = String(record?.file_name || '').trim()
       const ext = extname(fileName).toLowerCase()
@@ -307,7 +307,7 @@ export async function GET(request) {
       const durationSec = Math.max(0, Number(record?.duration_sec) || 0)
       const latestNote = noteByRecordingId.get(recordingId) || noteByFileName.get(fileName) || null
       const latestMeetingJob = jobByRecordingId.get(recordingId) || jobByFileName.get(fileName) || null
-      const urls = resolveRecordingUrls(record, userConfig)
+      const urls = await resolveRecordingUrls(record, userConfig)
       return {
         id: recordingId,
         name: fileName,
@@ -332,7 +332,9 @@ export async function GET(request) {
         latestNoteTitle: latestNote ? String(latestNote.noteTitle || '') : '',
         latestMeetingJob
       }
-    }).filter(item => item.id && item.name)
+    }))
+
+    const files = filesRaw.filter(item => item.id && item.name)
 
     files.sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))
 
