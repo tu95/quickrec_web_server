@@ -4,10 +4,18 @@ import { getMessages, getTranslations } from 'next-intl/server'
 import { routing } from '../../i18n/routing'
 import HomeAuthActions from '../home-auth-actions'
 
+// 这个函数主要是按语言返回页面标题和站点图标。
 export async function generateMetadata({ params }) {
   const { locale } = await params
   const t = await getTranslations({ locale, namespace: 'home' })
-  return { title: t('title') }
+  return {
+    title: t('title'),
+    icons: {
+      icon: '/favicon.ico',
+      shortcut: '/favicon.ico',
+      apple: '/favicon.ico'
+    }
+  }
 }
 
 export const viewport = {

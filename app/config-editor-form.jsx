@@ -183,16 +183,16 @@ export default function ConfigEditorForm({
     updateAliyunSection('oss', { [field]: value })
   }
 
-  function getFieldInputStyle(field) {
-    if (ossTouchedMap[field] && ossFieldErrors[field]) {
-      return { ...inputStyle, ...inputErrorStyle }
-    }
-    return inputStyle
+  function getFieldInputClass(field) {
+    const hasError = !!(ossTouchedMap[field] && ossFieldErrors[field])
+    return hasError
+      ? 'w-full min-h-11 rounded-xl border border-red-400/70 bg-white/8 px-3 py-2 text-sm text-white outline-none transition focus:border-red-300 focus:ring-2 focus:ring-red-300/30'
+      : 'w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30'
   }
 
   function renderFieldError(field) {
     if (!ossTouchedMap[field] || !ossFieldErrors[field]) return null
-    return <div style={fieldErrorStyle}>{ossFieldErrors[field]}</div>
+    return <div className="mt-1 text-xs text-red-300">{ossFieldErrors[field]}</div>
   }
 
   function updateProvider(providerId, patch) {
@@ -478,7 +478,7 @@ export default function ConfigEditorForm({
   }
 
   if (!config) {
-    return <div style={errorStyle}>配置不可用</div>
+    return <div className="ui-notice ui-notice-error">配置不可用</div>
   }
 
   // 子配置标签页
@@ -489,18 +489,18 @@ export default function ConfigEditorForm({
   ]
 
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
+    <div className="grid gap-3">
       {!readOnly && !hideSaveButton && (
-        <div style={topBarStyle}>
-          <button style={primaryBtnStyle} onClick={saveConfig} disabled={saveBusy}>
+        <div className="flex justify-end">
+          <button className="ui-btn ui-btn-primary" onClick={saveConfig} disabled={saveBusy}>
             {saveBusy ? '保存中...' : saveLabel}
           </button>
         </div>
       )}
 
-      {message && <div style={okStyle}>{message}</div>}
-      {error && <div style={errorStyle}>{error}</div>}
-      {readOnly && <div style={readonlyBannerStyle}>当前为只读状态，无法修改。</div>}
+      {message && <div className="ui-notice ui-notice-success">{message}</div>}
+      {error && <div className="ui-notice ui-notice-error">{error}</div>}
+      {readOnly && <div className="ui-notice ui-notice-info">当前为只读状态，无法修改。</div>}
 
       {/* 只显示当前服务类型的配置，不显示标签页导航 */}
 
@@ -520,7 +520,7 @@ export default function ConfigEditorForm({
                       {aliyunTestResultMap.oss.text}
                     </span>
                   ) : null}
-                  <button style={ghostBtnStyle} onClick={() => testAliyunService('oss')} disabled={aliyunTestBusyMap.oss}>
+                  <button className="ui-btn ui-btn-secondary" onClick={() => testAliyunService('oss')} disabled={aliyunTestBusyMap.oss}>
                     {aliyunTestBusyMap.oss ? (isEn ? 'Testing...' : '测试中...') : (isEn ? 'Test Storage' : '测试对象存储')}
                   </button>
                 </div>
@@ -532,39 +532,39 @@ export default function ConfigEditorForm({
                 <input
                   value={config.aliyun.oss.provider || ''}
                   onChange={e => updateOssField('provider', e.target.value)}
-                  style={getFieldInputStyle('provider')}
+                  className={getFieldInputClass('provider')}
                   placeholder={isEn ? 'Custom label, e.g. r2-prod' : '自定义标签，例如 r2-prod'}
                 />
                 {renderFieldError('provider')}
               </div>
               <div>
                 <label style={labelStyle}>Endpoint</label>
-                <input value={config.aliyun.oss.endpoint || ''} onChange={e => updateOssField('endpoint', e.target.value)} style={getFieldInputStyle('endpoint')} />
+                <input value={config.aliyun.oss.endpoint || ''} onChange={e => updateOssField('endpoint', e.target.value)} className={getFieldInputClass('endpoint')} />
                 {renderFieldError('endpoint')}
               </div>
               <div>
                 <label style={labelStyle}>Region</label>
-                <input value={config.aliyun.oss.region || ''} onChange={e => updateOssField('region', e.target.value)} style={getFieldInputStyle('region')} />
+                <input value={config.aliyun.oss.region || ''} onChange={e => updateOssField('region', e.target.value)} className={getFieldInputClass('region')} />
                 {renderFieldError('region')}
               </div>
               <div>
                 <label style={labelStyle}>Bucket</label>
-                <input value={config.aliyun.oss.bucket || ''} onChange={e => updateOssField('bucket', e.target.value)} style={getFieldInputStyle('bucket')} />
+                <input value={config.aliyun.oss.bucket || ''} onChange={e => updateOssField('bucket', e.target.value)} className={getFieldInputClass('bucket')} />
                 {renderFieldError('bucket')}
               </div>
               <div>
                 <label style={labelStyle}>AccessKeyId</label>
-                <input value={config.aliyun.oss.accessKeyId || ''} onChange={e => { markSecretDirty('ossAccessKeyId'); updateOssField('accessKeyId', e.target.value) }} style={getFieldInputStyle('accessKeyId')} />
+                <input value={config.aliyun.oss.accessKeyId || ''} onChange={e => { markSecretDirty('ossAccessKeyId'); updateOssField('accessKeyId', e.target.value) }} className={getFieldInputClass('accessKeyId')} />
                 {renderFieldError('accessKeyId')}
               </div>
               <div>
                 <label style={labelStyle}>AccessKeySecret</label>
-                <input value={config.aliyun.oss.accessKeySecret || ''} onChange={e => { markSecretDirty('ossAccessKeySecret'); updateOssField('accessKeySecret', e.target.value) }} style={getFieldInputStyle('accessKeySecret')} />
+                <input value={config.aliyun.oss.accessKeySecret || ''} onChange={e => { markSecretDirty('ossAccessKeySecret'); updateOssField('accessKeySecret', e.target.value) }} className={getFieldInputClass('accessKeySecret')} />
                 {renderFieldError('accessKeySecret')}
               </div>
               <div>
                 <label style={labelStyle}>{isEn ? 'Object Storage Public Base URL' : '对象存储 Public Base URL'}</label>
-                <input value={config.aliyun.oss.publicBaseUrl || ''} onChange={e => updateOssField('publicBaseUrl', e.target.value)} style={getFieldInputStyle('publicBaseUrl')} />
+                <input value={config.aliyun.oss.publicBaseUrl || ''} onChange={e => updateOssField('publicBaseUrl', e.target.value)} className={getFieldInputClass('publicBaseUrl')} />
                 {renderFieldError('publicBaseUrl')}
               </div>
               <div>
@@ -572,7 +572,7 @@ export default function ConfigEditorForm({
                 <input
                   value={config.aliyun.oss.objectPrefixMp3 || ''}
                   onChange={e => updateOssField('objectPrefixMp3', e.target.value)}
-                  style={getFieldInputStyle('objectPrefixMp3')}
+                  className={getFieldInputClass('objectPrefixMp3')}
                 />
                 {renderFieldError('objectPrefixMp3')}
               </div>
@@ -581,7 +581,7 @@ export default function ConfigEditorForm({
                 <input
                   value={config.aliyun.oss.objectPrefixOpus || ''}
                   onChange={e => updateOssField('objectPrefixOpus', e.target.value)}
-                  style={getFieldInputStyle('objectPrefixOpus')}
+                  className={getFieldInputClass('objectPrefixOpus')}
                 />
                 {renderFieldError('objectPrefixOpus')}
               </div>
@@ -604,7 +604,7 @@ export default function ConfigEditorForm({
                       {aliyunTestResultMap.asr.text}
                     </span>
                   ) : null}
-                  <button style={ghostBtnStyle} onClick={() => testAliyunService('asr')} disabled={aliyunTestBusyMap.asr}>
+                  <button className="ui-btn ui-btn-secondary" onClick={() => testAliyunService('asr')} disabled={aliyunTestBusyMap.asr}>
                     {aliyunTestBusyMap.asr ? '测试中...' : '测试 ASR'}
                   </button>
                 </div>
@@ -613,43 +613,43 @@ export default function ConfigEditorForm({
             <div style={fieldGridStyle}>
               <div>
                 <label style={labelStyle}>Provider</label>
-                <input value={config.aliyun.asr.provider || ''} onChange={e => updateAliyunSection('asr', { provider: e.target.value })} style={inputStyle} />
+                <input value={config.aliyun.asr.provider || ''} onChange={e => updateAliyunSection('asr', { provider: e.target.value })} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30" />
               </div>
               <div>
                 <label style={labelStyle}>ASR Base URL</label>
-                <input value={config.aliyun.asr.baseUrl || ''} onChange={e => updateAliyunSection('asr', { baseUrl: e.target.value })} style={inputStyle} />
+                <input value={config.aliyun.asr.baseUrl || ''} onChange={e => updateAliyunSection('asr', { baseUrl: e.target.value })} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30" />
               </div>
               <div>
                 <label style={labelStyle}>ASR API Key</label>
-                <input value={config.aliyun.asr.apiKey || ''} onChange={e => { markSecretDirty('asrApiKey'); updateAliyunSection('asr', { apiKey: e.target.value }) }} style={inputStyle} />
+                <input value={config.aliyun.asr.apiKey || ''} onChange={e => { markSecretDirty('asrApiKey'); updateAliyunSection('asr', { apiKey: e.target.value }) }} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30" />
               </div>
               <div>
                 <label style={labelStyle}>ASR Model</label>
-                <input value={config.aliyun.asr.model || ''} onChange={e => updateAliyunSection('asr', { model: e.target.value })} style={inputStyle} />
+                <input value={config.aliyun.asr.model || ''} onChange={e => updateAliyunSection('asr', { model: e.target.value })} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30" />
               </div>
               <div>
                 <label style={labelStyle}>ASR Test File URL</label>
-                <input value={config.aliyun.asr.testFileUrl || ''} onChange={e => updateAliyunSection('asr', { testFileUrl: e.target.value })} style={inputStyle} />
+                <input value={config.aliyun.asr.testFileUrl || ''} onChange={e => updateAliyunSection('asr', { testFileUrl: e.target.value })} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30" />
               </div>
               <div>
                 <label style={labelStyle}>Submit Path</label>
-                <input value={config.aliyun.asr.submitPath || ''} onChange={e => updateAliyunSection('asr', { submitPath: e.target.value })} style={inputStyle} />
+                <input value={config.aliyun.asr.submitPath || ''} onChange={e => updateAliyunSection('asr', { submitPath: e.target.value })} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30" />
               </div>
               <div>
                 <label style={labelStyle}>Query Path Template</label>
-                <input value={config.aliyun.asr.queryPathTemplate || ''} onChange={e => updateAliyunSection('asr', { queryPathTemplate: e.target.value })} style={inputStyle} />
+                <input value={config.aliyun.asr.queryPathTemplate || ''} onChange={e => updateAliyunSection('asr', { queryPathTemplate: e.target.value })} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30" />
               </div>
               <div>
                 <label style={labelStyle}>Language Hints</label>
-                <input value={languageHintsText} onChange={e => setLanguageHintsText(e.target.value)} style={inputStyle} />
+                <input value={languageHintsText} onChange={e => setLanguageHintsText(e.target.value)} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30" />
               </div>
               <div>
                 <label style={labelStyle}>Polling Interval (ms)</label>
-                <input value={String(config.aliyun.asr.pollingIntervalMs)} onChange={e => updateAliyunSection('asr', { pollingIntervalMs: Number(e.target.value || 0) })} style={inputStyle} />
+                <input value={String(config.aliyun.asr.pollingIntervalMs)} onChange={e => updateAliyunSection('asr', { pollingIntervalMs: Number(e.target.value || 0) })} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30" />
               </div>
               <div>
                 <label style={labelStyle}>Polling Timeout (ms)</label>
-                <input value={String(config.aliyun.asr.pollingTimeoutMs)} onChange={e => updateAliyunSection('asr', { pollingTimeoutMs: Number(e.target.value || 0) })} style={inputStyle} />
+                <input value={String(config.aliyun.asr.pollingTimeoutMs)} onChange={e => updateAliyunSection('asr', { pollingTimeoutMs: Number(e.target.value || 0) })} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30" />
               </div>
               <div>
                 <label style={labelStyle}>Speaker Count</label>
@@ -664,7 +664,7 @@ export default function ConfigEditorForm({
                     const parsed = raw ? Number.parseInt(raw, 10) : NaN
                     updateAliyunSection('asr', { speakerCount: Number.isInteger(parsed) ? parsed : null })
                   }}
-                  style={inputStyle}
+                  className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30"
                 />
               </div>
               <div style={{ display: 'flex', alignItems: 'end' }}>
@@ -675,7 +675,7 @@ export default function ConfigEditorForm({
               </div>
             </div>
             <label style={labelStyle}>ASR requestExtraParams (JSON)</label>
-            <textarea value={asrExtraText} onChange={e => setAsrExtraText(e.target.value)} rows={5} style={textareaStyle} />
+            <textarea value={asrExtraText} onChange={e => setAsrExtraText(e.target.value)} rows={5} className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30 min-h-28 leading-6" />
           </section>
         )}
 
@@ -688,7 +688,7 @@ export default function ConfigEditorForm({
                   <h3 style={sectionTitleStyle}>LLM 提供商与模型</h3>
                   <p style={sectionHintStyle}>支持多提供商和多模型。</p>
                 </div>
-                <button style={ghostBtnStyle} onClick={addProvider} disabled={readOnly}>新增提供商</button>
+                <button className="ui-btn ui-btn-secondary" onClick={addProvider} disabled={readOnly}>新增提供商</button>
               </div>
 
               <div style={fieldGridStyle}>
@@ -697,7 +697,7 @@ export default function ConfigEditorForm({
                   <input
                     value={config.llm.defaultProviderId}
                     onChange={e => patchConfig(prev => ({ ...prev, llm: { ...prev.llm, defaultProviderId: e.target.value } }))}
-                    style={inputStyle}
+                    className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30"
                     placeholder="请输入默认 Provider ID"
                   />
                 </div>
@@ -706,7 +706,7 @@ export default function ConfigEditorForm({
                   <input
                     value={config.llm.defaultModel || ''}
                     onChange={e => patchConfig(prev => ({ ...prev, llm: { ...prev.llm, defaultModel: e.target.value } }))}
-                    style={inputStyle}
+                    className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30"
                   />
                 </div>
               </div>
@@ -728,26 +728,26 @@ export default function ConfigEditorForm({
                                   {providerResult.text}
                                 </span>
                               ) : null}
-                              <button style={ghostBtnStyle} onClick={() => testProvider(provider.id)} disabled={testBusyMap[provider.id]}>
+                              <button className="ui-btn ui-btn-secondary" onClick={() => testProvider(provider.id)} disabled={testBusyMap[provider.id]}>
                                 {testBusyMap[provider.id] ? '测试中...' : '测试连通性'}
                               </button>
                             </div>
                           ) : null}
-                          <button style={dangerBtnStyle} onClick={() => removeProvider(provider.id)} disabled={readOnly}>删除</button>
+                          <button className="ui-btn ui-btn-danger" onClick={() => removeProvider(provider.id)} disabled={readOnly}>删除</button>
                         </div>
                       </div>
                       <div style={fieldGridStyle}>
                         <div>
                           <label style={labelStyle}>ID</label>
-                          <input value={provider.id} onChange={e => updateProvider(provider.id, { id: e.target.value })} style={inputStyle} />
+                          <input value={provider.id} onChange={e => updateProvider(provider.id, { id: e.target.value })} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30" />
                         </div>
                         <div>
                           <label style={labelStyle}>名称</label>
-                          <input value={provider.name} onChange={e => updateProvider(provider.id, { name: e.target.value })} style={inputStyle} />
+                          <input value={provider.name} onChange={e => updateProvider(provider.id, { name: e.target.value })} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30" />
                         </div>
                         <div>
                           <label style={labelStyle}>Base URL</label>
-                          <input value={provider.baseUrl} onChange={e => updateProvider(provider.id, { baseUrl: e.target.value })} style={inputStyle} />
+                          <input value={provider.baseUrl} onChange={e => updateProvider(provider.id, { baseUrl: e.target.value })} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30" />
                         </div>
                         <div>
                           <label style={labelStyle}>API Key</label>
@@ -757,12 +757,12 @@ export default function ConfigEditorForm({
                               markProviderApiKeyDirty(provider.id)
                               updateProvider(provider.id, { apiKey: e.target.value })
                             }}
-                            style={inputStyle}
+                            className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30"
                           />
                         </div>
                         <div>
                           <label style={labelStyle}>模型</label>
-                          <select value={provider.selectedModel || ''} onChange={e => updateProvider(provider.id, { selectedModel: e.target.value })} style={inputStyle}>
+                          <select value={provider.selectedModel || ''} onChange={e => updateProvider(provider.id, { selectedModel: e.target.value })} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30">
                             <option value="">请选择模型</option>
                             {modelOptions.map(modelId => (
                               <option key={modelId} value={modelId}>{modelId}</option>
@@ -778,7 +778,7 @@ export default function ConfigEditorForm({
                       </div>
                       {allowTesting && (
                         <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-                          <button style={ghostBtnStyle} onClick={() => fetchProviderModels(provider.id)} disabled={modelsBusyMap[provider.id]}>
+                          <button className="ui-btn ui-btn-secondary" onClick={() => fetchProviderModels(provider.id)} disabled={modelsBusyMap[provider.id]}>
                             {modelsBusyMap[provider.id] ? '拉取中...' : '获取模型列表'}
                           </button>
                           <button
@@ -814,23 +814,23 @@ export default function ConfigEditorForm({
                 <h3 style={sectionTitleStyle}>会议纪要 Prompt</h3>
                 <p style={sectionHintStyle}>多 Prompt 管理，单选默认项。</p>
               </div>
-              <button style={ghostBtnStyle} onClick={addPrompt} disabled={readOnly}>新增 Prompt</button>
+              <button className="ui-btn ui-btn-secondary" onClick={addPrompt} disabled={readOnly}>新增 Prompt</button>
             </div>
             <div style={{ display: 'grid', gap: 12 }}>
               {promptList.map(prompt => (
                 <div key={prompt.id} style={subCardStyle}>
                   <div style={providerHeadStyle}>
                     <strong>{prompt.name}</strong>
-                    <button style={dangerBtnStyle} onClick={() => removePrompt(prompt.id)} disabled={readOnly}>删除</button>
+                    <button className="ui-btn ui-btn-danger" onClick={() => removePrompt(prompt.id)} disabled={readOnly}>删除</button>
                   </div>
                   <div style={fieldGridStyle}>
                     <div>
                       <label style={labelStyle}>ID</label>
-                      <input value={prompt.id} onChange={e => updatePrompt(prompt.id, { id: e.target.value })} style={inputStyle} />
+                      <input value={prompt.id} onChange={e => updatePrompt(prompt.id, { id: e.target.value })} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30" />
                     </div>
                     <div>
                       <label style={labelStyle}>名称</label>
-                      <input value={prompt.name} onChange={e => updatePrompt(prompt.id, { name: e.target.value })} style={inputStyle} />
+                      <input value={prompt.name} onChange={e => updatePrompt(prompt.id, { name: e.target.value })} className="w-full min-h-11 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30" />
                     </div>
                     <div style={{ display: 'flex', alignItems: 'end' }}>
                       <label style={checkLabelStyle}>
@@ -846,7 +846,7 @@ export default function ConfigEditorForm({
                     </div>
                   </div>
                   <label style={labelStyle}>Prompt 内容</label>
-                  <textarea value={prompt.content} onChange={e => updatePrompt(prompt.id, { content: e.target.value })} rows={8} style={textareaStyle} />
+                  <textarea value={prompt.content} onChange={e => updatePrompt(prompt.id, { content: e.target.value })} rows={8} className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-300/80 focus:ring-2 focus:ring-violet-400/30 min-h-28 leading-6" />
                 </div>
               ))}
             </div>

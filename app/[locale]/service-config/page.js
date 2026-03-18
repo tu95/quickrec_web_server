@@ -44,14 +44,14 @@ export default async function ServiceConfigPage() {
   const t = await getTranslations('serviceConfig')
   return (
     <main className="page-root">
-      <section className="panel panel-dark" style={{ marginBottom: 14 }}>
-        <h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.2 }}>{t('title')}</h1>
-        <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>
+      <section className="panel panel-dark mb-3 rounded-2xl border border-white/10 bg-gradient-to-b from-[#161321eb] to-[#110f1ce8] p-4 shadow-[0_18px_42px_rgba(5,4,11,0.38)]">
+        <h1 className="m-0 text-[28px] leading-[1.2] font-extrabold text-violet-50">{t('title')}</h1>
+        <p className="muted mt-2.5 mb-0 text-sm text-white/70">
           {t('description')}
         </p>
       </section>
 
-      <section className="panel panel-dark">
+      <section className="panel panel-dark rounded-2xl border border-white/10 bg-gradient-to-b from-[#161321eb] to-[#110f1ce8] p-3 shadow-[0_18px_42px_rgba(5,4,11,0.38)]">
         <ConfigProfilesManager
           mode="user"
           title={t('userConfigTitle')}

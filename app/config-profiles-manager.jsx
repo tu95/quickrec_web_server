@@ -374,12 +374,12 @@ export default function ConfigProfilesManager({
     : selectedProfile
 
   return (
-    <section>
+    <section className="space-y-3">
       {!hideHeader ? (
-        <div style={headStyle}>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 style={titleStyle}>{title}</h3>
-            {subtitle ? <p style={subtitleStyle}>{subtitle}</p> : null}
+            <h3 className="m-0 text-xl font-extrabold text-violet-50">{title}</h3>
+            {subtitle ? <p className="mt-1 text-sm text-white/70">{subtitle}</p> : null}
           </div>
         </div>
       ) : null}
@@ -388,12 +388,12 @@ export default function ConfigProfilesManager({
       {error && <div className="ui-notice ui-notice-error">{error}</div>}
       {listApi.cacheMessage && <div className="ui-notice ui-notice-info">{listApi.cacheMessage}</div>}
 
-      <div className="config-profiles-layout" style={layoutStyle}>
-        <aside className="config-profiles-sidebar" style={sidebarStyle}>
-          <div style={sidebarTopStyle}>
-            <div style={sidebarTitleWrapStyle}>
-              <div style={sidebarEyebrowStyle}>Service Config</div>
-              <div style={sidebarTitleStyle}>服务配置</div>
+      <div className="config-profiles-layout grid items-start gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+        <aside className="config-profiles-sidebar min-w-0 rounded-2xl border border-white/10 bg-white/[0.03] p-3 backdrop-blur-md xl:sticky xl:top-4">
+          <div className="mb-1 grid gap-1">
+            <div className="grid gap-1">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-violet-200/70">Service Config</div>
+              <div className="text-lg font-extrabold text-violet-50">服务配置</div>
             </div>
           </div>
 
@@ -452,7 +452,7 @@ export default function ConfigProfilesManager({
                     {/* 新增配置按钮 */}
                     <button
                       type="button"
-                      style={addBtnStyle}
+                      className="ui-btn ui-btn-secondary w-full"
                       onClick={createProfile}
                       disabled={busyMap.create}
                     >
@@ -465,14 +465,14 @@ export default function ConfigProfilesManager({
           })}
         </aside>
 
-        <div className="config-profiles-editor" style={editorWrapStyle}>
-          <div style={editorHeadStyle}>
+        <div className="config-profiles-editor grid min-w-0 gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 backdrop-blur-md">
+          <div className="mb-1">
             <div>
-              <div style={editorEyebrowStyle}>{selectedReadonly ? '只读' : '自定义配置'}</div>
-              <h4 style={editorTitleStyle}>
+              <div className="text-[11px] uppercase tracking-[0.14em] text-violet-200/70">{selectedReadonly ? '只读' : '自定义配置'}</div>
+              <h4 className="mt-1 text-lg font-bold text-violet-50">
                 {selectedName || (selectedReadonly ? '默认配置' : '请选择配置或新增')}
               </h4>
-              <p style={editorDescStyle}>
+              <p className="mt-1 text-sm text-white/65">
                 {selectedReadonly
                   ? '系统默认配置，仅可查看。'
                   : '自定义配置，保存后生效。'}
@@ -483,9 +483,9 @@ export default function ConfigProfilesManager({
           {selectedReadonly ? (
             <>
               {systemDefaultProfile && (
-                <div style={readonlyCardStyle}>
-                  <div style={readonlyBadgeStyle}>系统默认</div>
-                  <div style={readonlyTextStyle}>
+                <div className="rounded-xl border border-violet-300/30 bg-violet-500/10 p-3">
+                  <div className="inline-flex rounded-full border border-violet-300/40 bg-violet-500/20 px-2.5 py-1 text-xs font-bold text-violet-100">系统默认</div>
+                  <div className="mt-2 text-sm leading-6 text-violet-100/90">
                     {selectedService === 'oss' && (isEn ? 'Object Storage uses system default config.' : '对象存储使用系统默认配置。')}
                     {selectedService === 'asr' && 'ASR 转写使用系统默认配置。'}
                     {selectedService === 'llm' && 'LLM 大模型使用系统默认配置。'}
@@ -517,7 +517,7 @@ export default function ConfigProfilesManager({
                 onChange={e => setSelectedName(e.target.value)}
                 placeholder="请输入自定义配置名称"
               />
-              <div style={actionRowStyle}>
+              <div className="mt-2 flex flex-wrap justify-end gap-2">
                 <button type="button" className="ui-btn ui-btn-danger" onClick={deleteSelectedProfile} disabled={busyMap.delete || !selectedId}>
                   {busyMap.delete ? '删除中...' : '删除配置'}
                 </button>
@@ -542,9 +542,9 @@ export default function ConfigProfilesManager({
               />
             </>
           ) : (
-            <div style={emptyStateStyle}>
-              <div style={emptyStateTitleStyle}>请选择配置</div>
-              <div style={emptyStateTextStyle}>从左侧选择服务类型，然后选择或新增配置。</div>
+            <div className="grid gap-2 rounded-xl border border-dashed border-white/20 p-6 text-center">
+              <div className="text-base font-semibold text-violet-100">请选择配置</div>
+              <div className="text-sm text-white/65">从左侧选择服务类型，然后选择或新增配置。</div>
             </div>
           )}
         </div>
