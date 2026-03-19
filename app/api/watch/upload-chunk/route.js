@@ -496,6 +496,24 @@ function makeAuthError(errorText) {
   )
 }
 
+function makeServiceUnavailableError(errorText) {
+  return Response.json(
+    { success: false, error: String(errorText || '服务暂时不可用，请稍后重试') },
+    { status: 503, headers: withCorsHeaders() }
+  )
+}
+
+function isHardDeviceAuthError(errorText) {
+  // 这个函数主要是识别“必须重新配对”的硬失效错误。
+  const text = String(errorText || '').trim()
+  if (!text) return false
+  return (
+    text.includes('设备未绑定') ||
+    text.includes('会话已失效') ||
+    text.includes('重新配对')
+  )
+}
+
 function hasQueuedOrRunningJob(jobId) {
   const id = String(jobId || '')
   if (!id) return false
@@ -594,6 +612,7 @@ export async function triggerPendingUploadsRecovery() {
 }
 
 export async function POST(request) {
+  // 这个接口主要处理手表分片上传，并把设备会话错误分成硬失效和临时失败。
   let sessionCacheKey = ''
   const configError = getSupabaseConfigError()
   if (configError) {
@@ -629,7 +648,11 @@ export async function POST(request) {
     try {
       auth = await validateDeviceSessionForUpload(sessionToken)
     } catch (authError) {
-      return makeAuthError(String(authError?.message || authError))
+      const authText = String(authError?.message || authError)
+      if (isHardDeviceAuthError(authText)) {
+        return makeAuthError(authText)
+      }
+      return makeServiceUnavailableError('鉴权服务暂时不可用，请稍后重试')
     }
 
     const userId = String(auth.userId || '')

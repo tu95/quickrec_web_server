@@ -945,47 +945,6 @@ export default function FileManagerClient({ origin, initialFiles, cacheUserId })
           OPUS归档 ({grouped.opusArchive.length})
         </button>
       </div>
-      <div style={paginationToolbarStyle}>
-        <div style={paginationInfoStyle}>
-          当前显示 {list.length === 0 ? 0 : pageStart + 1}-{Math.min(pageEnd, list.length)} / {list.length}
-        </div>
-        <div style={paginationControlsStyle}>
-          <label style={pageSizeLabelStyle} htmlFor="file-page-size-select">每页</label>
-          <select
-            id="file-page-size-select"
-            value={pageSize}
-            onChange={(event) => {
-              const next = Number(event.target.value)
-              if (!Number.isFinite(next) || next <= 0) return
-              setPageSize(next)
-            }}
-            style={pageSizeSelectStyle}
-          >
-            <option value={10}>10</option>
-            <option value={20}>20</option>
-            <option value={50}>50</option>
-          </select>
-          <button
-            type="button"
-            style={pageBtnStyle}
-            className="file-tab-btn"
-            disabled={safeCurrentPage <= 1}
-            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-          >
-            上一页
-          </button>
-          <span style={pageNumberStyle}>第 {safeCurrentPage} / {totalPages} 页</span>
-          <button
-            type="button"
-            style={pageBtnStyle}
-            className="file-tab-btn"
-            disabled={safeCurrentPage >= totalPages}
-            onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-          >
-            下一页
-          </button>
-        </div>
-      </div>
       <audio
         key={`${player.url}#${player.token}`}
         ref={audioRef}
@@ -1133,6 +1092,47 @@ export default function FileManagerClient({ origin, initialFiles, cacheUserId })
           </table>
         </div>
       )}
+      <div style={paginationToolbarStyle}>
+        <div style={paginationInfoStyle}>
+          当前显示 {list.length === 0 ? 0 : pageStart + 1}-{Math.min(pageEnd, list.length)} / {list.length}
+        </div>
+        <div style={paginationControlsStyle}>
+          <label style={pageSizeLabelStyle} htmlFor="file-page-size-select">每页</label>
+          <select
+            id="file-page-size-select"
+            value={pageSize}
+            onChange={(event) => {
+              const next = Number(event.target.value)
+              if (!Number.isFinite(next) || next <= 0) return
+              setPageSize(next)
+            }}
+            style={pageSizeSelectStyle}
+          >
+            <option value={10}>10</option>
+            <option value={20}>20</option>
+            <option value={50}>50</option>
+          </select>
+          <button
+            type="button"
+            style={pageBtnStyle}
+            className="file-tab-btn"
+            disabled={safeCurrentPage <= 1}
+            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+          >
+            上一页
+          </button>
+          <span style={pageNumberStyle}>第 {safeCurrentPage} / {totalPages} 页</span>
+          <button
+            type="button"
+            style={pageBtnStyle}
+            className="file-tab-btn"
+            disabled={safeCurrentPage >= totalPages}
+            onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+          >
+            下一页
+          </button>
+        </div>
+      </div>
 
       <div style={{ marginTop: 18, color: '#60797f', fontSize: 12 }}>
         当前服务地址: {origin}
@@ -1425,7 +1425,7 @@ const paginationToolbarStyle = {
   justifyContent: 'space-between',
   gap: 10,
   flexWrap: 'wrap',
-  marginBottom: 10,
+  marginTop: 10,
   padding: '8px 2px'
 }
 

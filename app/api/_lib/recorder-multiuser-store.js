@@ -173,6 +173,7 @@ export async function touchDeviceMetadata(identity, identitySource, deviceSource
 }
 
 export async function createPairCodeForDevice(deviceIdentity, identitySource, deviceSource, options) {
+  // 这个函数主要是为设备发配对码，并在已绑定时直接回传可用会话。
   const opts = options && typeof options === 'object' ? options : {}
   const forceRebind = opts.forceRebind === true
   const security = getSecurityConfig()
@@ -195,7 +196,9 @@ export async function createPairCodeForDevice(deviceIdentity, identitySource, de
         alreadyPaired: true,
         status: 'already_paired',
         pairCode: '',
-        expiresAt: ''
+        expiresAt: '',
+        sessionToken: String(activeSession.session_token || ''),
+        sessionExpiresAt: String(activeSession.expires_at || '')
       }
     }
   } else {

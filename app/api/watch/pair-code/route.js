@@ -15,6 +15,7 @@ function normalizeBoolFlag(value) {
 }
 
 export async function POST(request) {
+  // 这个接口主要是下发配对码；已绑定场景会直接回传设备会话。
   const configError = getSupabaseConfigError()
   if (configError) {
     return Response.json(
@@ -58,6 +59,8 @@ export async function POST(request) {
       expiresAt: String(result.expiresAt || ''),
       alreadyPaired: result.alreadyPaired === true,
       status: String(result.status || ''),
+      sessionToken: String(result.sessionToken || ''),
+      sessionExpiresAt: String(result.sessionExpiresAt || ''),
       bindPath: '/pair'
     })
   } catch (error) {
