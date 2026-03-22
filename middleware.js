@@ -182,6 +182,7 @@ function buildLoginRedirect(request, pathname) {
   return loginUrl
 }
 
+// 这个中间件主要是给页面做路由处理，并给 API 补统一鉴权。
 export async function middleware(request) {
   const method = String(request.method || '').toUpperCase()
   const hasNextActionHeader = !!request.headers.get('next-action')
@@ -201,6 +202,9 @@ export async function middleware(request) {
 
   // API 路由：不走 i18n，只做 auth
   if (isApiRoute) {
+    if (method === 'OPTIONS') return NextResponse.next()
+    if (pathname === '/api/upload' && method === 'GET') return NextResponse.next()
+
     const userSession = String(request.cookies.get(ACCESS_COOKIE)?.value || '').trim()
     const refreshToken = String(request.cookies.get(REFRESH_COOKIE)?.value || '').trim()
     const authHeader = String(request.headers.get('authorization') || '').trim()

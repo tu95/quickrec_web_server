@@ -303,3 +303,52 @@ begin
       0 as remaining;
 end;
 $$;
+
+create or replace function public.refund_recorder_quota(
+  p_user_id uuid,
+  p_feature_key text
+)
+returns table (
+  used_count integer
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_used integer := 0;
+begin
+  if p_user_id is null then
+    raise exception 'p_user_id is required';
+  end if;
+  if coalesce(trim(p_feature_key), '') = '' then
+    raise exception 'p_feature_key is required';
+  end if;
+
+  insert into public.recorder_usage_counters (
+    user_id,
+    feature_key,
+    used_count,
+    created_at,
+    updated_at
+  )
+  values (
+    p_user_id,
+    p_feature_key,
+    0,
+    now(),
+    now()
+  )
+  on conflict (user_id, feature_key) do nothing;
+
+  update public.recorder_usage_counters as counters
+  set used_count = greatest(counters.used_count - 1, 0),
+      updated_at = now()
+  where counters.user_id = p_user_id
+    and counters.feature_key = p_feature_key
+  returning counters.used_count into v_used;
+
+  return query
+    select coalesce(v_used, 0) as used_count;
+end;
+$$;

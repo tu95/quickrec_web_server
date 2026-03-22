@@ -213,7 +213,11 @@ async function getLatestJobState(jobId) {
   const safeJobId = safeEntityId(jobId)
   if (!safeJobId) return null
   const inMemory = JOBS.get(safeJobId)
-  if (inMemory) return inMemory
+  if (inMemory) {
+    const collapsed = await collapseStalePersistedJobIfNeeded(inMemory)
+    JOBS.set(safeJobId, collapsed)
+    return collapsed
+  }
   const stored = await readPersistedJob(safeJobId)
   if (stored) {
     const collapsed = await collapseStalePersistedJobIfNeeded(stored)
@@ -918,9 +922,10 @@ async function runMeetingJob(job) {
   }
 }
 
-export async function createMeetingJob(input) {
-  const userId = normalizeUserId(input?.userId)
-  if (!userId) {
+// 这个函数主要是把请求里的录音参数解析成真实录音。
+export async function resolveRecordingForMeetingJob(userId, input) {
+  const safeUserId = normalizeUserId(userId)
+  if (!safeUserId) {
     throw new Error('缺少用户信息')
   }
   const requestedRecordingId = safeEntityId(input?.recordingId)
@@ -928,12 +933,12 @@ export async function createMeetingJob(input) {
 
   let recording = null
   if (requestedRecordingId) {
-    recording = await getUserRecordingById(userId, requestedRecordingId)
+    recording = await getUserRecordingById(safeUserId, requestedRecordingId)
     if (!recording) {
       throw new Error('录音不存在或无权限')
     }
   } else if (requestedFileName) {
-    recording = await findLatestUserRecordingByFileName(userId, requestedFileName)
+    recording = await findLatestUserRecordingByFileName(safeUserId, requestedFileName)
     if (!recording) {
       throw new Error('录音不存在或无权限')
     }
@@ -943,6 +948,26 @@ export async function createMeetingJob(input) {
 
   const recordingId = safeEntityId(recording?.id || requestedRecordingId)
   const fileName = safeFileName(recording?.file_name || requestedFileName)
+  if (!recordingId || !fileName) throw new Error('录音信息无效')
+
+  return {
+    recording,
+    recordingId,
+    fileName
+  }
+}
+
+// 这个函数主要是创建会议纪要任务并异步拉起处理。
+export async function createMeetingJob(input) {
+  const userId = normalizeUserId(input?.userId)
+  if (!userId) {
+    throw new Error('缺少用户信息')
+  }
+  const resolved = input?.resolvedRecording && typeof input.resolvedRecording === 'object'
+    ? input.resolvedRecording
+    : await resolveRecordingForMeetingJob(userId, input)
+  const recordingId = safeEntityId(resolved?.recordingId)
+  const fileName = safeFileName(resolved?.fileName)
   if (!recordingId || !fileName) throw new Error('录音信息无效')
 
   const id = makeId('job')
@@ -970,21 +995,15 @@ export async function createMeetingJob(input) {
   return toClientJob(job)
 }
 
+// 这个函数主要是按最新状态读取会议纪要任务。
 export async function getMeetingJob(id, userId) {
   const jobId = safeEntityId(id)
   if (!jobId) return null
 
-  const inMemory = JOBS.get(jobId)
-  if (inMemory) {
-    if (!canAccessByUser(inMemory.userId, userId)) return null
-    return toClientJob(inMemory)
-  }
-
-  const stored = await readPersistedJob(jobId)
-  if (!stored) return null
-  if (!canAccessByUser(stored.userId, userId)) return null
-  JOBS.set(jobId, stored)
-  return toClientJob(stored)
+  const latest = await getLatestJobState(jobId)
+  if (!latest) return null
+  if (!canAccessByUser(latest.userId, userId)) return null
+  return toClientJob(latest)
 }
 
 export async function cancelMeetingJob(id, userId) {

@@ -10,6 +10,16 @@ import {
 } from '../../_lib/recorder-multiuser-store'
 import { getSupabaseConfigError } from '../../_lib/supabase-client'
 import {
+  buildUploadSessionKey,
+  buildUploadSessionPartPath,
+  cleanupStaleUploadSessions,
+  cleanupTmpPart,
+  deleteUploadSession,
+  getUploadSession,
+  runChunkSessionExclusive,
+  setUploadSession
+} from '../../_lib/upload-chunk-session'
+import {
   savePendingJob,
   removePendingJob,
   loadPendingJobs
@@ -39,7 +49,6 @@ const ASYNC_UPLOAD_MAX_RETRIES = 3
 const ASYNC_UPLOAD_RETRY_DELAY_MS = 1200
 const MAX_RECENT_ASYNC_JOBS = 120
 
-const uploadSessionMap = new Map()
 const asyncUploadQueue = []
 const asyncUploadJobMap = new Map()
 const recentAsyncUploadJobs = []
@@ -79,17 +88,6 @@ function buildObjectFileName(fileName, userId) {
   const safe = safeFileName(fileName)
   const userTag = normalizeUserObjectTag(userId)
   return `${userTag}_${Date.now()}_${Math.floor(Math.random() * 1000000)}_${safe}`
-}
-
-function buildUploadSessionKey(userId, uploadId) {
-  const uid = String(userId || '').trim()
-  const upid = String(uploadId || '').trim()
-  return `${uid}:${upid}`
-}
-
-function toPartFileNameFromSessionKey(sessionKey) {
-  const safe = String(sessionKey || '').replace(/[^a-zA-Z0-9_-]/g, '_')
-  return `${safe}.part`
 }
 
 async function buildUniqueFileName(originalName) {
@@ -267,26 +265,6 @@ export function getAsyncUploadJobsByIds(jobIds) {
     })
   }
   return out
-}
-
-async function cleanupTmpPart(filePath) {
-  try {
-    await fs.unlink(filePath)
-  } catch {}
-}
-
-async function cleanupStaleUploadSessions() {
-  const now = nowMs()
-  for (const [key, session] of uploadSessionMap.entries()) {
-    const ts = Number(session?.updatedAt) || 0
-    if (!ts || (now - ts) > UPLOAD_SESSION_STALE_MS) {
-      uploadSessionMap.delete(key)
-      const partPath = String(session?.partPath || '')
-      if (partPath) {
-        await cleanupTmpPart(partPath)
-      }
-    }
-  }
 }
 
 function queueAsyncUploadJob(jobInput) {
@@ -600,9 +578,10 @@ async function recoverPendingJobs() {
   return summary
 }
 
+// 这个函数主要是恢复手表上传的遗留任务。
 export async function triggerPendingUploadsRecovery() {
   await ensureDirs()
-  await cleanupStaleUploadSessions()
+  await cleanupStaleUploadSessions(UPLOAD_SESSION_STALE_MS)
   const summary = await recoverPendingJobs()
   return {
     ...summary,
@@ -625,7 +604,7 @@ export async function POST(request) {
   let parsed = null
   try {
     await ensureDirs()
-    await cleanupStaleUploadSessions()
+    await cleanupStaleUploadSessions(UPLOAD_SESSION_STALE_MS)
 
     const body = await request.json().catch(() => null)
     if (!body || typeof body !== 'object') {
@@ -657,118 +636,121 @@ export async function POST(request) {
 
     const userId = String(auth.userId || '')
     const deviceDbId = String(auth.device?.id || '')
-    const cacheKey = buildUploadSessionKey(userId, parsed.uploadId)
+    const cacheKey = buildUploadSessionKey(userId, parsed.uploadId, 'watch')
     sessionCacheKey = cacheKey
-    const partPath = join(TMP_DIR, toPartFileNameFromSessionKey(cacheKey))
 
-    let session = uploadSessionMap.get(cacheKey)
-    if (!session) {
-      if (parsed.firstIndex !== 0) {
-        return makeClientError('缺少初始分片，请从第1片重新上传')
+    return await runChunkSessionExclusive(cacheKey, async () => {
+      const partPath = buildUploadSessionPartPath(TMP_DIR, cacheKey)
+      let session = getUploadSession(cacheKey)
+      if (!session) {
+        if (parsed.firstIndex !== 0) {
+          return makeClientError('缺少初始分片，请从第1片重新上传')
+        }
+        session = {
+          uploadId: cacheKey,
+          partPath,
+          deviceIdentity: String(deviceIdentity || '').trim(),
+          userId,
+          deviceDbId,
+          fileName: parsed.fileName,
+          total: parsed.total,
+          declaredSize: parsed.size,
+          nextIndex: 0,
+          receivedBytes: 0,
+          createdAt: nowMs(),
+          updatedAt: nowMs()
+        }
+        setUploadSession(cacheKey, session)
+        await cleanupTmpPart(partPath)
       }
-      session = {
-        uploadId: cacheKey,
-        partPath,
-        deviceIdentity: String(deviceIdentity || '').trim(),
+
+      if (session.deviceIdentity && deviceIdentity && session.deviceIdentity !== deviceIdentity) {
+        deleteUploadSession(cacheKey)
+        await cleanupTmpPart(partPath)
+        return makeClientError('uploadId 与设备不匹配')
+      }
+      if (session.userId !== userId) {
+        deleteUploadSession(cacheKey)
+        await cleanupTmpPart(partPath)
+        return makeAuthError('uploadId 与当前账号会话不匹配，请重新上传')
+      }
+      if (session.total !== parsed.total) {
+        deleteUploadSession(cacheKey)
+        await cleanupTmpPart(partPath)
+        return makeClientError('total 与历史分片不一致')
+      }
+      if (session.fileName !== parsed.fileName) {
+        deleteUploadSession(cacheKey)
+        await cleanupTmpPart(partPath)
+        return makeClientError('fileName 与历史分片不一致')
+      }
+      if (parsed.firstIndex !== session.nextIndex) {
+        return makeSequenceConflictError(session.nextIndex)
+      }
+
+      let incomingBytes = 0
+      for (const part of parsed.chunks) {
+        incomingBytes += Number(part?.buffer?.length || 0)
+      }
+      const nextBytes = Number(session.receivedBytes || 0) + incomingBytes
+      if (nextBytes > MAX_UPLOAD_BYTES) {
+        deleteUploadSession(cacheKey)
+        await cleanupTmpPart(partPath)
+        return makeClientError(`文件过大，最大 ${Math.floor(MAX_UPLOAD_BYTES / 1024 / 1024)}MB`)
+      }
+
+      for (const part of parsed.chunks) {
+        await fs.appendFile(partPath, part.buffer)
+      }
+
+      session.receivedBytes = nextBytes
+      session.nextIndex = parsed.lastIndex + 1
+      session.updatedAt = nowMs()
+      setUploadSession(cacheKey, session)
+
+      if (parsed.lastIndex < parsed.total - 1) {
+        return Response.json(
+          {
+            success: true,
+            done: false,
+            next: session.nextIndex,
+            acceptedCount: parsed.chunks.length
+          },
+          { headers: withCorsHeaders() }
+        )
+      }
+
+      const finalFileName = await buildUniqueFileName(session.fileName)
+      const finalPath = join(UPLOAD_DIR, finalFileName)
+      await fs.rename(partPath, finalPath)
+      deleteUploadSession(cacheKey)
+
+      const asyncJob = queueAsyncUploadJob({
+        uploadId: parsed.uploadId,
         userId,
         deviceDbId,
-        fileName: parsed.fileName,
-        total: parsed.total,
-        declaredSize: parsed.size,
-        nextIndex: 0,
-        receivedBytes: 0,
-        createdAt: nowMs(),
-        updatedAt: nowMs()
-      }
-      uploadSessionMap.set(cacheKey, session)
-      await cleanupTmpPart(partPath)
-    }
+        deviceIdentity,
+        localFileName: finalFileName
+      })
 
-    if (session.deviceIdentity && deviceIdentity && session.deviceIdentity !== deviceIdentity) {
-      uploadSessionMap.delete(cacheKey)
-      await cleanupTmpPart(partPath)
-      return makeClientError('uploadId 与设备不匹配')
-    }
-    if (session.userId !== userId) {
-      uploadSessionMap.delete(cacheKey)
-      await cleanupTmpPart(partPath)
-      return makeAuthError('uploadId 与当前账号会话不匹配，请重新上传')
-    }
-    if (session.total !== parsed.total) {
-      uploadSessionMap.delete(cacheKey)
-      await cleanupTmpPart(partPath)
-      return makeClientError('total 与历史分片不一致')
-    }
-    if (session.fileName !== parsed.fileName) {
-      uploadSessionMap.delete(cacheKey)
-      await cleanupTmpPart(partPath)
-      return makeClientError('fileName 与历史分片不一致')
-    }
-    if (parsed.firstIndex !== session.nextIndex) {
-      return makeSequenceConflictError(session.nextIndex)
-    }
-
-    let incomingBytes = 0
-    for (const part of parsed.chunks) {
-      incomingBytes += Number(part?.buffer?.length || 0)
-    }
-    const nextBytes = Number(session.receivedBytes || 0) + incomingBytes
-    if (nextBytes > MAX_UPLOAD_BYTES) {
-      uploadSessionMap.delete(cacheKey)
-      await cleanupTmpPart(partPath)
-      return makeClientError(`文件过大，最大 ${Math.floor(MAX_UPLOAD_BYTES / 1024 / 1024)}MB`)
-    }
-
-    for (const part of parsed.chunks) {
-      await fs.appendFile(partPath, part.buffer)
-    }
-
-    session.receivedBytes = nextBytes
-    session.nextIndex = parsed.lastIndex + 1
-    session.updatedAt = nowMs()
-
-    if (parsed.lastIndex < parsed.total - 1) {
       return Response.json(
         {
           success: true,
-          done: false,
-          next: session.nextIndex,
-          acceptedCount: parsed.chunks.length
+          done: true,
+          queued: true,
+          queueStatus: asyncJob.status,
+          queueJobId: asyncJob.id,
+          fileName: finalFileName,
+          size: session.receivedBytes,
+          url: ''
         },
         { headers: withCorsHeaders() }
       )
-    }
-
-    const finalFileName = await buildUniqueFileName(session.fileName)
-    const finalPath = join(UPLOAD_DIR, finalFileName)
-    await fs.rename(partPath, finalPath)
-    uploadSessionMap.delete(cacheKey)
-
-    const asyncJob = queueAsyncUploadJob({
-      uploadId: parsed.uploadId,
-      userId,
-      deviceDbId,
-      deviceIdentity,
-      localFileName: finalFileName
     })
-
-    return Response.json(
-      {
-        success: true,
-        done: true,
-        queued: true,
-        queueStatus: asyncJob.status,
-        queueJobId: asyncJob.id,
-        fileName: finalFileName,
-        size: session.receivedBytes,
-        url: ''
-      },
-      { headers: withCorsHeaders() }
-    )
   } catch (error) {
     if (sessionCacheKey) {
-      const stale = uploadSessionMap.get(sessionCacheKey)
-      uploadSessionMap.delete(sessionCacheKey)
+      const stale = getUploadSession(sessionCacheKey)
+      deleteUploadSession(sessionCacheKey)
       if (stale && stale.partPath) {
         await cleanupTmpPart(stale.partPath)
       }

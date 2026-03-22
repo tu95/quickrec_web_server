@@ -191,15 +191,23 @@ export async function createPairCodeForDevice(deviceIdentity, identitySource, de
   if (!forceRebind) {
     const activeSession = await getActiveDeviceSessionByDevice(device.id)
     if (activeSession) {
-      return {
-        device,
-        alreadyPaired: true,
-        status: 'already_paired',
-        pairCode: '',
-        expiresAt: '',
-        sessionToken: String(activeSession.session_token || ''),
-        sessionExpiresAt: String(activeSession.expires_at || '')
+      const bindingAlive = await hasActiveUserDeviceBinding(
+        client,
+        String(activeSession.user_id || ''),
+        device.id
+      )
+      if (bindingAlive) {
+        return {
+          device,
+          alreadyPaired: true,
+          status: 'already_paired',
+          pairCode: '',
+          expiresAt: '',
+          sessionToken: String(activeSession.session_token || ''),
+          sessionExpiresAt: String(activeSession.expires_at || '')
+        }
       }
+      await revokeDeviceSessionById(client, activeSession.id)
     }
   } else {
     await revokeActiveDeviceSessions(device.id)
@@ -370,6 +378,31 @@ async function getActiveDeviceSessionByDevice(deviceId) {
     .limit(1)
   if (error) throw new Error(String(error.message || '读取设备会话失败'))
   return firstRow(data)
+}
+
+// 这个函数主要是检查设备和用户的有效绑定还在不在。
+async function hasActiveUserDeviceBinding(client, userId, deviceId) {
+  const { data, error } = await client
+    .from(TABLE.userDevices)
+    .select('id')
+    .eq('user_id', String(userId || '').trim())
+    .eq('device_id', String(deviceId || '').trim())
+    .eq('status', 'active')
+    .limit(1)
+  if (error) throw new Error(String(error.message || '读取设备绑定关系失败'))
+  return !!firstRow(data)
+}
+
+// 这个函数主要是作废一条旧设备会话。
+async function revokeDeviceSessionById(client, sessionId) {
+  const { error } = await client
+    .from(TABLE.deviceSessions)
+    .update({
+      status: 'revoked',
+      updated_at: nowIso()
+    })
+    .eq('id', String(sessionId || '').trim())
+  if (error) throw new Error(String(error.message || '撤销设备会话失败'))
 }
 
 async function revokeActiveDeviceSessions(deviceId) {

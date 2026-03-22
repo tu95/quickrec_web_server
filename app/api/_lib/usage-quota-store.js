@@ -1,6 +1,7 @@
 import { createSupabaseServiceClient } from './supabase-client'
 
 const USAGE_RPC = 'consume_recorder_quota'
+const REFUND_USAGE_RPC = 'refund_recorder_quota'
 const FEATURE_MEETING_NOTES = 'meeting_notes_generate'
 const USER_QUOTA_LIMITS_TABLE = 'recorder_user_quota_limits'
 const DEFAULT_NON_ADMIN_MEETING_NOTES_LIMIT = 5
@@ -72,6 +73,34 @@ function isAmbiguousUsageColumnError(error) {
   )
 }
 
+// 这个函数主要是把任意 used_count 值转成安全整数。
+function normalizeUsedCount(rawCount) {
+  const value = toNumber(rawCount, 0)
+  if (value <= 0) return 0
+  return Math.floor(value)
+}
+
+// 这个函数主要是读取当前功能的已用次数。
+async function getFeatureUsageCount(userId, featureKey) {
+  const safeUserId = normalizeUserId(userId)
+  const safeFeatureKey = String(featureKey || '').trim()
+  if (!safeUserId || !safeFeatureKey) throw new Error('配额查询参数无效')
+
+  const client = createSupabaseServiceClient()
+  const { data, error } = await client
+    .from('recorder_usage_counters')
+    .select('used_count')
+    .eq('user_id', safeUserId)
+    .eq('feature_key', safeFeatureKey)
+    .maybeSingle()
+
+  if (error) {
+    if (isMissingUsageSchemaError(error)) throw new Error(MISSING_USAGE_SCHEMA_ERROR)
+    throw new Error(String(error.message || '配额查询失败'))
+  }
+  return normalizeUsedCount(data?.used_count)
+}
+
 export function getNonAdminMeetingNotesLimit() {
   return normalizeLimit(process.env.NON_ADMIN_MEETING_NOTES_LIMIT)
 }
@@ -113,20 +142,7 @@ export async function getMeetingNotesQuotaStatus(userId, options = null) {
   if (!safeUserId) throw new Error('用户未登录')
 
   const limit = await resolveMeetingNotesLimit(safeUserId, options)
-  const client = createSupabaseServiceClient()
-  const { data, error } = await client
-    .from('recorder_usage_counters')
-    .select('used_count')
-    .eq('user_id', safeUserId)
-    .eq('feature_key', FEATURE_MEETING_NOTES)
-    .maybeSingle()
-
-  if (error) {
-    if (isMissingUsageSchemaError(error)) throw new Error(MISSING_USAGE_SCHEMA_ERROR)
-    throw new Error(String(error.message || '配额查询失败'))
-  }
-
-  const usedCount = toNumber(data?.used_count, 0)
+  const usedCount = await getFeatureUsageCount(safeUserId, FEATURE_MEETING_NOTES)
   const remaining = Math.max(limit - usedCount, 0)
   return {
     allowed: remaining > 0,
@@ -162,6 +178,34 @@ export async function consumeMeetingNotesQuota(userId, options = null) {
   const remaining = toNumber(row.remaining, Math.max(0, limit - usedCount))
   return {
     allowed,
+    usedCount,
+    remaining,
+    limit,
+    message: getNonAdminMeetingNotesLimitMessage(limit)
+  }
+}
+
+// 这个函数主要是在建任务失败后回退一次纪要额度。
+export async function refundMeetingNotesQuota(userId, options = null) {
+  const safeUserId = normalizeUserId(userId)
+  if (!safeUserId) throw new Error('用户未登录')
+
+  const limit = await resolveMeetingNotesLimit(safeUserId, options)
+  const client = createSupabaseServiceClient()
+  const { data, error } = await client.rpc(REFUND_USAGE_RPC, {
+    p_user_id: safeUserId,
+    p_feature_key: FEATURE_MEETING_NOTES
+  })
+  if (error) {
+    if (isMissingUsageSchemaError(error)) throw new Error(MISSING_USAGE_SCHEMA_ERROR)
+    throw new Error(String(error.message || '配额回退失败'))
+  }
+
+  const row = firstRow(data)
+  const usedCount = normalizeUsedCount(row?.used_count)
+  const remaining = Math.max(limit - usedCount, 0)
+  return {
+    allowed: remaining > 0,
     usedCount,
     remaining,
     limit,

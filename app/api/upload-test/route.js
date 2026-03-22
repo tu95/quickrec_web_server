@@ -13,22 +13,6 @@ async function ensureUploadDir() {
   await fs.mkdir(UPLOAD_DIR, { recursive: true })
 }
 
-function getRequestOrigin(request) {
-  const forwardedHost = request.headers.get('x-forwarded-host')
-  const forwardedProto = request.headers.get('x-forwarded-proto')
-  if (forwardedHost) {
-    return `${forwardedProto || 'http'}://${forwardedHost}`
-  }
-
-  const host = request.headers.get('host')
-  if (host) {
-    const proto = forwardedProto || (request.url.startsWith('https://') ? 'https' : 'http')
-    return `${proto}://${host}`
-  }
-
-  return new URL(request.url).origin
-}
-
 function safeFileName(name) {
   return String(name || '').replace(/[\/\\]/g, '_')
 }
@@ -47,6 +31,7 @@ function normalizeBase64(data) {
   return remainder === 0 ? cleaned : cleaned + '='.repeat(4 - remainder)
 }
 
+// 这个接口主要是写入测试文件，但不会伪造正式播放地址。
 export async function POST(request) {
   try {
     const auth = await requireUserAuth(request)
@@ -66,7 +51,6 @@ export async function POST(request) {
       )
     }
 
-    const origin = getRequestOrigin(request)
     const fileName = safeFileName(body.fileName || `api_test_${Date.now()}.txt`) || `api_test_${Date.now()}.txt`
     const text = typeof body.text === 'string' ? body.text : ''
     const base64 = normalizeBase64(body.data || body.contentBase64 || '')
@@ -100,7 +84,8 @@ export async function POST(request) {
         endpoint: '/api/upload-test',
         filename: finalName,
         size: buffer.length,
-        url: `${origin}/api/files/${encodeURIComponent(finalName)}`,
+        url: null,
+        warning: '仅本地文件，暂无正式播放 URL',
       },
       { headers: CORS_HEADERS }
     )

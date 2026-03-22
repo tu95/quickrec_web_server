@@ -29,22 +29,7 @@ function sanitizeFileName(rawName) {
   return safeName
 }
 
-function getRequestOrigin(request) {
-  const forwardedHost = request.headers.get('x-forwarded-host')
-  const forwardedProto = request.headers.get('x-forwarded-proto')
-  if (forwardedHost) {
-    return `${forwardedProto || 'http'}://${forwardedHost}`
-  }
-
-  const host = request.headers.get('host')
-  if (host) {
-    const proto = forwardedProto || (request.url.startsWith('https://') ? 'https' : 'http')
-    return `${proto}://${host}`
-  }
-
-  return new URL(request.url).origin
-}
-
+// 这个接口主要是把本地 opus 转成 mp3，但不会伪造正式播放地址。
 export async function POST(request) {
   const auth = await requireSiteAuth(request)
   if (!auth.ok) {
@@ -98,7 +83,8 @@ export async function POST(request) {
         source: fileName,
         filename: converted.filename,
         size: converted.size,
-        url: `${getRequestOrigin(request)}/api/files/${encodeURIComponent(converted.filename)}`
+        url: null,
+        warning: '仅本地文件，暂无正式播放 URL'
       },
       { headers: CORS_HEADERS }
     )

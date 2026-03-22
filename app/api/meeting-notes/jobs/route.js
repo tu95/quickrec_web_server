@@ -1,9 +1,17 @@
-import { createMeetingJob, getRequestOrigin } from '../../_lib/meeting-notes'
+import {
+  createMeetingJob,
+  getRequestOrigin,
+  resolveRecordingForMeetingJob
+} from '../../_lib/meeting-notes'
 import { requireSiteAuth } from '../../_lib/admin-auth'
-import { consumeMeetingNotesQuota } from '../../_lib/usage-quota-store'
+import {
+  consumeMeetingNotesQuota,
+  refundMeetingNotesQuota
+} from '../../_lib/usage-quota-store'
 
 const QUOTA_EXCEEDED_CODE = 'MEETING_NOTES_QUOTA_EXCEEDED'
 
+// 这个接口主要是创建会议纪要任务，并在失败时回退额度。
 export async function POST(request) {
   const auth = await requireSiteAuth(request)
   if (!auth.ok) {
@@ -22,9 +30,30 @@ export async function POST(request) {
     )
   }
 
-  let consumedQuota = null
+  const userId = String(auth.user?.id || '')
+  let resolvedRecording = null
   try {
-    const quota = await consumeMeetingNotesQuota(String(auth.user?.id || ''))
+    resolvedRecording = await resolveRecordingForMeetingJob(userId, {
+      recordingId,
+      fileName
+    })
+  } catch (error) {
+    const text = String(error?.message || error)
+    const status = text.includes('录音不存在或无权限')
+      ? 404
+      : (text.includes('recordingId') || text.includes('录音参数无效') || text.includes('录音信息无效'))
+        ? 400
+        : 500
+    return Response.json(
+      { success: false, error: text },
+      { status }
+    )
+  }
+
+  let consumedQuota = null
+  let shouldRefundQuota = false
+  try {
+    const quota = await consumeMeetingNotesQuota(userId)
     if (!quota.allowed) {
       return Response.json(
         {
@@ -39,6 +68,7 @@ export async function POST(request) {
       )
     }
     consumedQuota = quota
+    shouldRefundQuota = true
   } catch (error) {
     return Response.json(
       { success: false, error: String(error?.message || error) },
@@ -54,8 +84,10 @@ export async function POST(request) {
       providerId: String(body?.providerId || ''),
       model: String(body?.model || ''),
       promptId: String(body?.promptId || ''),
-      userId: String(auth.user?.id || '')
+      userId,
+      resolvedRecording
     })
+    shouldRefundQuota = false
     return Response.json({
       success: true,
       job,
@@ -70,6 +102,13 @@ export async function POST(request) {
         : null
     })
   } catch (error) {
+    if (shouldRefundQuota) {
+      try {
+        await refundMeetingNotesQuota(userId)
+      } catch (refundError) {
+        console.error('[meeting-notes] refund quota failed', String(refundError?.message || refundError))
+      }
+    }
     const text = String(error?.message || error)
     const status = text.includes('录音不存在或无权限')
       ? 404
